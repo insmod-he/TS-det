@@ -19,7 +19,7 @@ const int kNumData = 1;
 const int kNumLabels = 1;
 const int kNumBBRegressionCoords = 4;
 const int kNumRegressionMasks = 8;
-const int Lab4ClsChanelIdx    = kNumRegressionMasks;   // 为了区分边界框回归的mask/label
+const int Lab4ClsChanelIdx    = kNumRegressionMasks;   // 为锟斤拷锟斤拷锟街边斤拷锟斤拷锟截癸拷锟斤拷mask/label
 const int NewLabelChannelNum  = Lab4ClsChanelIdx+1;
 
 const int PATH1_RECIPTION_FILD = 114;  // path1 reception file hlhe
@@ -29,13 +29,13 @@ const int PATH2_MIN_OBJ_SIZE   = 64;
 const int PATH2_MAX_OBJ_SIZE   = 110;
 const int PATH3_MIN_OBJ_SIZE   = 100;
 const float GRAY_ZONE_LAB      = 2.0;
-const float IGNORE_EDGE_LAB    = 3.0; // 用以标记标志周围应该忽略的区域
+const float IGNORE_EDGE_LAB    = 3.0; // 锟斤拷锟皆憋拷锟角憋拷志锟斤拷围应锟矫猴拷锟皆碉拷锟斤拷锟斤拷
 const float TRAFFIC_SIGN_LAB   = 1.0;
 const float BACKGROUND_LAB     = 0.0;
 const int MASK_NUM = 3;
 const float INVALIDE_BBOX_IDX = -1.0;
 
-// 用const修饰之后,居然就不能当做全局变量了~
+// 锟斤拷const锟斤拷锟斤拷之锟斤拷,锟斤拷然锟酵诧拷锟杰碉拷锟斤拷全锟街憋拷锟斤拷锟斤拷~
 int g_HardMiningStatus   = 0;
 int g_NormalStatus       = 1;
 int g_mining_status = g_NormalStatus;
@@ -50,7 +50,7 @@ template <typename Dtype>
 void DriveDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top)
 {
-  //一个batch里面,每计数hm_perid进行一次正常的迭代
+  //一锟斤拷batch锟斤拷锟斤拷,每锟斤拷锟斤拷hm_perid锟斤拷锟斤拷一锟斤拷锟斤拷锟斤拷锟侥碉拷锟斤拷
   int hm_perid = this->layer_param().drive_data_param().hm_perid();
   float ign_bb_scale = this->layer_param().drive_data_param().ignore_bbox_scale();
   lab_auxi_.set_perid(hm_perid);
@@ -231,7 +231,7 @@ int rescale_bb(int& x1, int& x2, int& y1, int& y2, int h, int w, float scale)
     return 0;
 }
 
-// 腐蚀标注模板
+// 锟斤拷蚀锟斤拷注模锟斤拷
 int mask_erode(cv::Mat& mask, int k=3)
 {
     cv::Mat m = mask>-1.0;
@@ -257,27 +257,6 @@ int mask_erode(cv::Mat& mask, int k=3)
     return 0;
 }
 
-
-
-/*
-1.标注产生阶段
-  a.为了训练的稳定,需要普通的训练数据.[有正样本,无gray zone]
-  b.为了稳定困难负样本挖掘,是要生成忽略区域.[有正样本,有gray zone]
-    (1).边界框放大1.2倍,标注为gray zone.
-    (2).如果没有poly_mask和ellipse_mask,则默认的边界框腐蚀一圈,作为正样本.
-    (3).如果存在poly_mask或ellipse_mask,则放弃bbox_mask,将poly_mask或
-　　　　　　　　poly_mask腐蚀一圈,作为正样本.
-  c.标注周期性的在正常/有gray zone两种状态切换.
-
-2.困难负样本挖掘
-  a.普通情况,不做任何处理,普通的训练流程.
-  b.困难负样本挖掘:
-    (a).有正样本时.由于出现了gray zone,可以判定为困难负样本
-　　　　挖掘状态.在可采样区域进行负样本采样.
-    (b).全部都是负样本.此时也可以判定出状态[没有正样本,没有gray zone]
-        此时在全局进行负样本挖掘.
-                                          --2016/09/12
-*/
 template<typename Dtype>
 bool ReadBoundingBoxLabelToDatum(
         const DrivingData& data,
@@ -287,13 +266,14 @@ bool ReadBoundingBoxLabelToDatum(
         const float resize,
         const DriveDataParameter& param,
         float* label_type,
-        bool can_pass, int bid,
+        bool can_pass, 
+        int bid,
         vector<cv::Mat> &genpic,
         vector<int> &genpic_type,
         vector<cv::Mat> &picgen,
         vector<Dtype*> &my_mask_ptr,
-        vector<vector<int> > &bbox_pts,  // 装填最终剩下的bbox(label级别分辨率)
-        bool normal_status)              // 普通状态/Hard mining状态
+        vector<vector<int> > &bbox_pts,  // 装锟斤拷锟斤拷锟斤拷剩锟铰碉拷bbox(label锟斤拷锟斤拷锟街憋拷锟斤拷)
+        bool normal_status)              // 锟斤拷通状态/Hard mining状态
 {
   bool have_obj = false;
   const int grid_dim = param.label_resolution();
@@ -485,7 +465,7 @@ bool ReadBoundingBoxLabelToDatum(
       gymax--;
     }
 
-    // 最终的感兴趣区域
+    // 锟斤拷锟秸的革拷锟斤拷趣锟斤拷锟斤拷
     cv::Rect r(gxmin, gymin, gxmax - gxmin + 1, gymax - gymin + 1);
     bb_pushback(bbox_pts, gxmin, gxmax, gymin, gymax);
 
@@ -563,7 +543,7 @@ bool ReadBoundingBoxLabelToDatum(
     int bb_size = std::max<int>(xmax-xmin, ymax-ymin);
     //LOG(INFO)<<"bb_size:"<<bb_size;
 
-    // 注意计算bb_size的位置
+    // 注锟斤拷锟斤拷锟斤拷bb_size锟斤拷位锟斤拷
     if( !normal_status )
     {
         rescale_bb(m1_bb_xmin,m1_bb_xmax,
@@ -598,7 +578,7 @@ bool ReadBoundingBoxLabelToDatum(
                     if(normal_status){
                         path1_mask.at<float>(y_pos,x_pos) = TRAFFIC_SIGN_LAB;  // target!
                     }
-                    else {   // 标记标志周围需要忽略的区域,以区分因尺度而造成的忽略
+                    else {   // 锟斤拷锟角憋拷志锟斤拷围锟斤拷要锟斤拷锟皆碉拷锟斤拷锟斤拷,锟斤拷锟斤拷锟斤拷锟斤拷锟竭度讹拷锟斤拷锟缴的猴拷锟斤拷
                         path1_mask.at<float>(y_pos,x_pos) = IGNORE_EDGE_LAB;
                     }
                 }
@@ -627,7 +607,7 @@ bool ReadBoundingBoxLabelToDatum(
                         path2_mask.at<float>(y_pos,x_pos) = TRAFFIC_SIGN_LAB;  // target!
                     }
                     else
-                    {   // 标记标志周围需要忽略的区域,以区分因尺度而造成的忽略
+                    {   // 锟斤拷锟角憋拷志锟斤拷围锟斤拷要锟斤拷锟皆碉拷锟斤拷锟斤拷,锟斤拷锟斤拷锟斤拷锟斤拷锟竭度讹拷锟斤拷锟缴的猴拷锟斤拷
                         path2_mask.at<float>(y_pos,x_pos) = IGNORE_EDGE_LAB;
                     }
                 }
@@ -641,7 +621,7 @@ bool ReadBoundingBoxLabelToDatum(
                     path3_mask.at<float>(y_pos,x_pos) = TRAFFIC_SIGN_LAB;  // target!
                 }
                 else
-                {   // 标记标志周围需要忽略的区域,以区分因尺度而造成的忽略
+                {   // 锟斤拷锟角憋拷志锟斤拷围锟斤拷要锟斤拷锟皆碉拷锟斤拷锟斤拷,锟斤拷锟斤拷锟斤拷锟斤拷锟竭度讹拷锟斤拷锟缴的猴拷锟斤拷
                     path3_mask.at<float>(y_pos,x_pos) = IGNORE_EDGE_LAB;
                 }
             }
@@ -871,7 +851,7 @@ bool ReadBoundingBoxLabelToDatum(
                   }
                 }
               }
-              else // 直接在box_mask上面处理
+              else // 直锟斤拷锟斤拷box_mask锟斤拷锟芥处锟斤拷
               {
                 cv::rectangle(box_mask, r, cv::Scalar(id), -1);
               }
@@ -926,7 +906,7 @@ bool ReadBoundingBoxLabelToDatum(
     }
   }
 
- // 修改此处,以支持Hard ming中的忽略样本
+ // 锟睫改此达拷,锟斤拷支锟斤拷Hard ming锟叫的猴拷锟斤拷锟斤拷锟斤拷
   for (int m = 0; m < num_total_labels; ++m)
   {
     for (int y = 0; y < full_label_height; ++y)
@@ -995,7 +975,7 @@ bool ReadBoundingBoxLabelToDatum(
           float mask2_val = path2_mask.at<float>(j,i);
           float mask3_val = path3_mask.at<float>(j,i);
 
-          // 平时的普通情况,在前面bbox的基础上精修标注
+          // 平时锟斤拷锟斤拷通锟斤拷锟斤拷,锟斤拷前锟斤拷bbox锟侥伙拷锟斤拷锟较撅拷锟睫憋拷注
           if( normal_status )
           {
               // fix the edge zone to be "gray zone" -hlhe
@@ -1017,17 +997,17 @@ bool ReadBoundingBoxLabelToDatum(
                   path3_mask.at<float>(j,i) = BACKGROUND_LAB;
               }
           }
-          else // 负样本挖掘,边缘产生忽略区域
+          else // 锟斤拷锟斤拷锟斤拷锟节撅拷,锟斤拷缘锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷
           {
               // mask1
-              if( IGNORE_EDGE_LAB==mask1_val )      //需要修整的情况1
+              if( IGNORE_EDGE_LAB==mask1_val )      //锟斤拷要锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷1
               {
                   if( mask_ori_val!=-1 )
                       path1_mask.at<float>(j,i) = TRAFFIC_SIGN_LAB;
                   else
                       path1_mask.at<float>(j,i) = GRAY_ZONE_LAB;
               }
-              else if( TRAFFIC_SIGN_LAB==mask1_val ) //需要修整的情况2
+              else if( TRAFFIC_SIGN_LAB==mask1_val ) //锟斤拷要锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷2
               {
                   if( -1==mask_ori_val )
                       path1_mask.at<float>(j,i) = BACKGROUND_LAB;
@@ -1143,7 +1123,7 @@ void DriveDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
                    3,                          // channel
                   (int)param.cropped_height(), // 480
                   (int)param.cropped_width()}; // 640
-  memcpy(&top_shape[0], shape, sizeof(shape));
+  memcpy(&top_shape[0], shape, sizeof(shape)); // image data shape
 
   // Reshape batch according to the batch_size.
   top_shape[0] = batch_size;
@@ -1285,16 +1265,16 @@ try_again:
     }
     //LOG(INFO) << "?" << w_off << ' ' << h_off << ' ' << resize << ' ' << rmax << ' ' << rmin;
 
-    vector<vector<int> > bb_pts;                       // 保存下来的bbox坐标
+    vector<vector<int> > bb_pts;                       // 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷bbox锟斤拷锟斤拷
     vector<Dtype*> mask_muta_data;
     int batch_pos = item_id * mask_one_batch_count;
-    mask_muta_data.push_back(label_mask+batch_pos);
+    mask_muta_data.push_back(label_mask+batch_pos); // output pointers
 
     if (this->output_labels_)
     {
       bool have_obj = false;
-      bool is_normal = lab_auxi_.is_normal_status();  // 普通状态or困难负样本挖掘
-      vector<vector<int> > bbox_pts;   // 保存下来的bbox坐标
+      bool is_normal = lab_auxi_.is_normal_status();
+      vector<vector<int> > bbox_pts;
       have_obj = ReadBoundingBoxLabelToDatum(data,                 // raw data read from mdb
                                               &label_datums[0],     // output
                                               h_off,                // random offset
@@ -1311,7 +1291,7 @@ try_again:
                                               bb_pts,
                                               is_normal);
 
-      if (!have_obj) // 没有样本的情况下,一定的概率再裁剪一次
+      if (!have_obj) // for image that has no objects
       {
           if ( can_pass )
           {
@@ -1325,7 +1305,7 @@ try_again:
         //LOG(INFO)<<"try_again_count:"<<try_again_count;
     }
 
-    // 生成分类用的标注
+    // 锟斤拷锟缴凤拷锟斤拷锟矫的憋拷注
     vector<Batch<Dtype>*> batch_vec;
     batch_vec.push_back(batch);
 
@@ -1341,7 +1321,8 @@ try_again:
     float mat[] = { 1.f*resize,0.f,(float)-w_off, 0.f,1.f*resize,(float)-h_off };
     cv::Mat_<float> M(2,3, mat);
 
-    for (int c=0; c<img_datum.channels(); c++) {
+    for (int c=0; c<img_datum.channels(); c++) 
+    {
         cv::Mat_<Dtype> crop_img(cheight, cwidth, itop_data+c*cheight*cwidth);
         cv::Mat_<Dtype> pmean_img(img_datum.height(), img_datum.width(),
                           data_mean + c*img_datum.height()*img_datum.width());
@@ -1352,7 +1333,8 @@ try_again:
         cv::warpAffine(p_img, crop_img, M, crop_img.size(), cv::INTER_CUBIC);
 
         crop_img -= mean_img;
-        if (picgen.size()) {
+        if (picgen.size()) 
+        {
             cv::multiply(crop_img, 1-picgen[3], crop_img);
             picgen[c] = (picgen[c] - 255./2)*param.gen_scale();
             cv::multiply(picgen[c], picgen[3], picgen[c]);
@@ -1396,7 +1378,7 @@ try_again:
     }
   }
 
-  lab_auxi_.counter_tic(); //周期性计数.后续要生成一个全局变量来进行信号的同步.
+  lab_auxi_.counter_tic(); //锟斤拷锟斤拷锟皆硷拷锟斤拷.锟斤拷锟斤拷要锟斤拷锟斤拷一锟斤拷全锟街憋拷锟斤拷锟斤拷锟斤拷锟斤拷锟脚号碉拷同锟斤拷.
   lab_auxi_.set_global_status(g_mining_status,
             g_NormalStatus, g_HardMiningStatus);
   timer.Stop();
@@ -1408,7 +1390,7 @@ try_again:
 
 int LabelAuxiliary::gen_gray_zone(vector<vector<int> >& bbs_pts)
 {
-    // 普通情况,不做处理
+    // 锟斤拷通锟斤拷锟斤拷,锟斤拷锟斤拷锟斤拷锟斤拷
     if( is_normal_status() )
     {
         return -1;
@@ -1453,16 +1435,16 @@ int LabelAuxiliary::gen_gray_zone(vector<vector<int> >& bbs_pts)
     return 0;
 }
 
-// 待测试 2016/09/12 22:20
+// 锟斤拷锟斤拷锟斤拷 2016/09/12 22:20
 int LabelAuxiliary::update_mask(cv::Mat& ori_mask)
 {\
-    // 普通情况,不做处理
+    // 锟斤拷通锟斤拷锟斤拷,锟斤拷锟斤拷锟斤拷锟斤拷
     if( is_normal_status() )
     {
         return -1;
     }
 
-    int gs = 3;                     //结构元素(内核矩阵)的尺寸
+    int gs = 3;                     //锟结构元锟斤拷(锟节核撅拷锟斤拷)锟侥尺达拷
     cv::Mat mask = ori_mask>INVALIDE_BBOX_IDX;
     cv::Mat element = cv::getStructuringElement(cv::MORPH_RECT,
                                       cv::Size(gs, gs),
@@ -1472,12 +1454,12 @@ int LabelAuxiliary::update_mask(cv::Mat& ori_mask)
     cv::erode(mask, mask, element);
     //my_show_mat("mask", mask*125);
 
-    //此时貌似是-1表示背景
+    //锟斤拷时貌锟斤拷锟斤拷-1锟斤拷示锟斤拷锟斤拷
     for(int i=0; i<ori_mask.rows; i++)
     {
         for(int j=0; j<ori_mask.cols; j++)
         {
-            if( mask.at<uchar>(i,j)==0 )  //腐蚀之后,取值为[0,255]
+            if( mask.at<uchar>(i,j)==0 )  //锟斤拷蚀之锟斤拷,取值为[0,255]
             {
                 ori_mask.at<float>(i,j) = INVALIDE_BBOX_IDX;
             }
@@ -1489,7 +1471,7 @@ int LabelAuxiliary::update_mask(cv::Mat& ori_mask)
 }
 
 
-// 将先前得到的gray_zone添加到label上去
+// 锟斤拷锟斤拷前锟矫碉拷锟斤拷gray_zone锟斤拷锟接碉拷label锟斤拷去
 template<typename Dtype>
 int LabelAuxiliary::apply_gray_zone(Datum& lab_datum, int ori_ch, int tar_ch,
                                     vector<Batch<Dtype>*>& my_batch, int batch_idx)
@@ -1513,7 +1495,7 @@ int LabelAuxiliary::apply_gray_zone(Datum& lab_datum, int ori_ch, int tar_ch,
                 int ori_idx = (ori_ch*lab_datum.height()+i)*lab_datum.width() + j;
                 Dtype lab_val = lab_datum.float_data(ori_idx);
 
-                // 直接写入到batch的label处
+                // 直锟斤拷写锟诫到batch锟斤拷label锟斤拷
                 int tar_index = ((batch_idx * my_batch[0]->label().channels() + tar_ch)
                                   *my_batch[0]->label().height() + i)*my_batch[0]->label().width() + j;
                 batch_label[tar_index] = lab_val;
@@ -1521,7 +1503,7 @@ int LabelAuxiliary::apply_gray_zone(Datum& lab_datum, int ori_ch, int tar_ch,
             }
         }
     }
-    else  // 有忽略区域的情况
+    else  // 锟叫猴拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷
     {
         for( int i=0; i<h; i++)
         {
@@ -1543,7 +1525,7 @@ int LabelAuxiliary::apply_gray_zone(Datum& lab_datum, int ori_ch, int tar_ch,
                     new_val = lab_val;
                 }
 
-                // 直接写入到batch的label处
+                // 直锟斤拷写锟诫到batch锟斤拷label锟斤拷
                 int tar_index = ((batch_idx * my_batch[0]->label().channels() + tar_ch)
                                   *my_batch[0]->label().height() + i)*my_batch[0]->label().width() + j;
                 batch_label[tar_index] = new_val;
@@ -1581,7 +1563,7 @@ int MaskCorroder::init(int h, int w)
     return 0;
 }
 
-// 每种mask的生成方式都还不一样!
+// 每锟斤拷mask锟斤拷锟斤拷锟缴凤拷式锟斤拷锟斤拷锟斤拷一锟斤拷!
 int MaskCorroder::process(cv::Mat& tar_mask, PointsVec my_ptss, int tar_val)
 {
     //my_show_mat("before erode", tar_mask);
@@ -1591,7 +1573,7 @@ int MaskCorroder::process(cv::Mat& tar_mask, PointsVec my_ptss, int tar_val)
     cv::Scalar bg(0.0);
     cv::fillPoly(tmp_mask1_, my_ptss, bg);
 
-    int gs = 3; //结构元素(内核矩阵)的尺寸
+    int gs = 3; //锟结构元锟斤拷(锟节核撅拷锟斤拷)锟侥尺达拷
     cv::Mat element = cv::getStructuringElement(cv::MORPH_RECT,
                                       cv::Size(gs, gs),
                                       cv::Point(-1,-1));
