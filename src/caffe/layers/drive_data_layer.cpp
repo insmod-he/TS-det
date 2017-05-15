@@ -50,7 +50,6 @@ template <typename Dtype>
 void DriveDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top)
 {
-  //һ��batch����,ÿ����hm_perid����һ�������ĵ���
   int hm_perid = this->layer_param().drive_data_param().hm_perid();
   float ign_bb_scale = this->layer_param().drive_data_param().ignore_bbox_scale();
   lab_auxi_.set_perid(hm_perid);
@@ -122,15 +121,22 @@ void DriveDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
 
     memcpy(&type_shape[0], shape_type, sizeof(shape_type));
     memcpy(&mask_shape[0], shape_mask, sizeof(shape_mask));
+    top[2]->Reshape(mask_shape);     // Because there has no type loss. -hlhe
 
-    CHECK_GE(top.size(), 3);
-    top[2]->Reshape(mask_shape);                  // Because there has no type loss. -hlhe
+    // add 0515, distance data
+    vector<int> dis_shape(4,0);
+    dis_shape.push_back(batch_size);
+    dis_shape.push_back(2);          // inside-outside
+    dis_shape.push_back(h);
+    dis_shape.push_back(w);
+    top[3]->Reshape(dis_shape);
 
     for (int i = 0; i < this->PREFETCH_COUNT; ++i)
     {
       this->prefetch_[i].label(0).Reshape(label_shape);
       this->prefetch_[i].label(1).Reshape(mask_shape);
       this->prefetch_[i].label(2).Reshape(type_shape);
+      this->prefetch_[i].label(3).Reshape(type_shape);
     }
     lab_auxi_.reset_gray_zone(h, w);
     //pfun_is_normal = &(lab_auxi_.is_normal_status());
@@ -273,7 +279,8 @@ bool ReadBoundingBoxLabelToDatum(
         vector<cv::Mat> &picgen,
         vector<Dtype*> &my_mask_ptr,
         vector<vector<int> > &bbox_pts,  // װ������ʣ�µ�bbox(label�����ֱ���)
-        bool normal_status)              // ��ͨ״̬/Hard mining״̬
+        bool normal_status,              // Hard mining״̬
+        vector<Dtype* > &lab_dis_vec)
 {
   bool have_obj = false;
   const int grid_dim = param.label_resolution();
@@ -293,7 +300,8 @@ bool ReadBoundingBoxLabelToDatum(
   const int type_stride = full_label_width / type_label_width;
 
 
-  // fast check
+  // fast check 
+  // Todo: ignore small boxes and unrecognize boxes
   for (int i = 0; i < data.car_boxes_size(); ++i)
   {
     // skip bboxes that not focus on -hlhe
@@ -465,7 +473,7 @@ bool ReadBoundingBoxLabelToDatum(
       gymax--;
     }
 
-    // ���յĸ���Ȥ����
+    // boxes that remain
     cv::Rect r(gxmin, gymin, gxmax - gxmin + 1, gymax - gymin + 1);
     bb_pushback(bbox_pts, gxmin, gxmax, gymin, gymax);
 
@@ -637,234 +645,6 @@ bool ReadBoundingBoxLabelToDatum(
     hlhe_valid_bbox_cnt += 1; //hlhe
   }
 
-
-  // Generate artificial traffic signs -hlhe
-  if (genpic.size() > 0 && rand_float() < param.gen_rate())
-  {
-      // generate artificial mark
-      int ip = Rand() % genpic.size();
-      cv::Mat img;
-      genpic[ip].convertTo(img, CV_32FC4);    // template pic -hlhe
-      vector<cv::Mat> imgs(4);
-      cv::split(img, imgs);
-      imgs[3] /= 255.;
-
-      //===========================================================
-      //cv::Mat show_mat(img.rows, img.cols, CV_8UC1);
-      //imgs[3].convertTo(show_mat, CV_8UC1);
-      //cv::imshow("mask", show_mat); cv::waitKey(-1);
-      //===========================================================
-
-      int tp = genpic_type[ip];
-      int id = data.car_boxes_size();
-      itypes[id] = tp;
-
-      // assume it has 20 pad in image
-      int pad = 40;
-      int size = 200;
-      float nsize = rand_float() * (param.train_max()-param.train_min())+param.train_min();
-      float noff_x, noff_y;
-      int try_time = 0;
-      int max_try = 1000;
-
-      while (try_time++ < max_try)
-      {
-          noff_x = (rand_float() * (param.cropped_width()-nsize));
-          noff_y = (rand_float() * (param.cropped_height()-nsize));
-          bool ok = true;
-
-          for (int i = 0; i < data.car_boxes_size(); ++i)
-          {
-            float xmin = data.car_boxes(i).xmin()*resize - w_off;
-            float ymin = data.car_boxes(i).ymin()*resize - h_off;
-            float xmax = data.car_boxes(i).xmax()*resize - w_off;
-            float ymax = data.car_boxes(i).ymax()*resize - h_off;
-            if (check_cross(xmin, xmax, noff_x-pad, noff_x+nsize+pad) &&
-                check_cross(ymin, ymax, noff_y-pad, noff_y+nsize+pad))
-            {
-                ok = false;
-                break;
-            }
-          }
-          if (ok) break;
-      }
-
-      if (try_time >= max_try)
-      {
-          LOG(INFO) << "no space to place artificial mark";
-      }
-      else
-      {
-          //LOG(INFO) << "can place " << noff_x  << ' ' << noff_y;
-          int whs = Rand()&1;
-          cv::Point2f pts1[] = {cv::Point2f(0,0), cv::Point2f(1,0), cv::Point2f(0,1)};
-          cv::Point2f pts2[] = {cv::Point2f(0,0),
-                                cv::Point2f(1-whs*rand_float()*param.shrink_max(),
-                                            rand_float()*param.slip_max()*2-param.slip_max()),
-                                cv::Point2f(rand_float()*param.slip_max()*2-param.slip_max(),
-                                            1-(1-whs)*rand_float()*param.shrink_max())};
-
-          cv::Mat Ms = cv::getAffineTransform(pts1, pts2);
-          int blur_size = Rand() % (int)param.blur_max() * 2 + 1;
-          float noise_value = rand_float() * param.noise_max();
-          float gamma = std::exp(rand_float()*param.gamma_max()*2-param.gamma_max());
-          float kk = rand_float()*param.k_max()*2-param.k_max()+1;
-          float y0 = rand_float()*param.y0_max()*2-param.y0_max();
-
-          for (int i=0; i<4; i++)
-          {
-              cv::Mat tmp = cv::Mat::zeros(imgs[0].size(), CV_32FC1);
-              cv::warpAffine(imgs[i], tmp, Ms, imgs[i].size(),
-                             cv::INTER_CUBIC, cv::BORDER_CONSTANT, i==3?0.0f:255.0f);
-              tmp.copyTo(imgs[i]);
-              // gaussian blur
-              cv::GaussianBlur(imgs[i], tmp, cv::Size(blur_size,blur_size), 0);
-              tmp.copyTo(imgs[i]);
-              if (i==3) break;
-
-              // add noise
-              cv::randn(tmp, 0, 1);
-              imgs[i] += (tmp-0.5)*(noise_value*255.);
-              double mmin, mmax;
-              cv::minMaxLoc(imgs[i],&mmin,&mmax);
-              imgs[i] = (imgs[i]-mmin)/(mmax-mmin)*255.0;
-
-              // gamma
-              cv::Mat lut_matrix(1, 256, CV_8UC1 );
-              uchar * ptr = lut_matrix.ptr();
-              for( int j = 0; j < 256; j++ )
-              {
-                  float v = j / 255.0f;
-                  v = pow(v,gamma)*kk+y0;
-                  if (v<0) v=0;
-                  if (v>1) v=1;
-                  ptr[j] = (int)(v * 255.0);
-              }
-              imgs[i].convertTo(tmp, CV_8UC1);
-              cv::LUT( tmp, lut_matrix, tmp );
-              tmp.convertTo(imgs[i], CV_32FC1);
-              //my_show_mat(tmp);
-          }
-
-          float resize = nsize / size;
-          noff_x -= pad*resize;
-          noff_y -= pad*resize;
-          float mat[] = { resize,0.f,noff_x, 0.f,resize,noff_y};
-          cv::Mat_<float> M(2,3, mat);
-          for (int i=0; i<3; i++)
-              cv::warpAffine(imgs[i], picgen[i], M, picgen[0].size(), cv::INTER_CUBIC,
-                             cv::BORDER_CONSTANT, 255.0);
-          cv::warpAffine(imgs[3], picgen[3], M, picgen[0].size(), cv::INTER_CUBIC,
-                 cv::BORDER_CONSTANT, 0.0);
-          cv::Mat &mask = picgen[3];
-          float xmax=-1e30, xmin=1e30, ymax=-1e30, ymin=1e30;
-
-          for (int y=0; y<mask.size().height; y++)
-          {
-              for (int x=0; x<mask.size().width; x++)
-              {
-                  if (mask.at<float>(y,x) > 0.5)
-                  {
-                      xmax = std::max(xmax, x*1.0f+1);
-                      xmin = std::min(xmin, x*1.0f);
-                      ymax = std::max(ymax, y*1.0f+1);
-                      ymin = std::min(ymin, y*1.0f);
-                  }
-              }
-          }
-          float w = xmax-xmin, h = ymax-ymin;
-
-          if (std::max(w,h) >= param.reco_min() && std::max(w,h) <= param.reco_max())
-          {
-              int gxmin = cvFloor((xmin + w * half_shrink_factor) * scaling);
-              int gxmax = cvCeil((xmax - w * half_shrink_factor) * scaling);
-              int gymin = cvFloor((ymin + h * half_shrink_factor) * scaling);
-              int gymax = cvCeil((ymax - h * half_shrink_factor) * scaling);
-
-              CHECK_LE(gxmin, gxmax);
-              CHECK_LE(gymin, gymax);
-              if (gxmin >= full_label_width)
-              {
-                gxmin = full_label_width - 1;
-              }
-              if (gymin >= full_label_height)
-              {
-                gymin = full_label_height - 1;
-              }
-              CHECK_LE(0, gxmin);
-              CHECK_LE(0, gymin);
-              CHECK_LE(gxmax, full_label_width);
-              CHECK_LE(gymax, full_label_height);
-              if (gxmin == gxmax)
-              {
-                if (gxmax < full_label_width - 1) {
-                  gxmax++;
-                }
-                else if (gxmin > 0)
-                {
-                  gxmin--;
-                }
-              }
-              if (gymin == gymax)
-              {
-                if (gymax < full_label_height - 1)
-                {
-                  gymax++;
-                }
-                else if (gymin > 0)
-                {
-                  gymin--;
-                }
-              }
-              CHECK_LT(gxmin, gxmax);
-              CHECK_LT(gymin, gymax);
-              if (gxmax == full_label_width)
-              {
-                gxmax--;
-              }
-              if (gymax == full_label_height)
-              {
-                gymax--;
-              }
-              cv::Rect r(gxmin, gymin, gxmax - gxmin + 1, gymax - gymin + 1);
-
-              float flabels[num_total_labels] =
-                  {1.0f, (float)xmin, (float)ymin, (float)xmax, (float)ymax, 1.0f / w, 1.0f / h, 1.0f};
-              for (int j = 0; j < num_total_labels; ++j)
-              {
-                cv::Mat roi(*labels[j], r);
-                roi = cv::Scalar(flabels[j]);
-              }
-
-              if (param.use_mask())
-              {
-                cv::Mat mask2(full_label_height,
-                              full_label_width, CV_32F,
-                                 cv::Scalar(0));
-                cv::resize(mask, mask2, mask2.size());
-                for (int y = 0; y < full_label_height; ++y)
-                {
-                  for (int x = 0; x < full_label_width; ++x)
-                  {
-                      if (mask2.at<float>(y,x)>=0.5f)
-                          box_mask.at<float>(y,x) = (float)id;
-                  }
-                }
-              }
-              else // ֱ����box_mask���洦��
-              {
-                cv::rectangle(box_mask, r, cv::Scalar(id), -1);
-              }
-              hlhe_valid_bbox_cnt += 1;
-          }
-          else
-          {
-              picgen.clear();
-          }
-
-      }
-  }
-
   datum->set_channels(num_total_labels);
   datum->set_height(full_label_height);
   datum->set_width(full_label_width);
@@ -894,6 +674,7 @@ bool ReadBoundingBoxLabelToDatum(
     }
   }
 
+  // normalization
   if (total_num_pixels != 0) {
     float reweight_value = 1.0 / total_num_pixels;
     for (int y = 0; y < full_label_height; ++y) {
@@ -906,7 +687,7 @@ bool ReadBoundingBoxLabelToDatum(
     }
   }
 
- // �޸Ĵ˴�,��֧��Hard ming�еĺ�������
+ // assignments
   for (int m = 0; m < num_total_labels; ++m)
   {
     for (int y = 0; y < full_label_height; ++y)
@@ -1137,6 +918,7 @@ void DriveDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
   vector<Dtype*> top_labels;
   Dtype *label_type = NULL;
   Dtype *label_mask = NULL;           // 3 path masks
+  Dtype *label_dis = NULL;
   int mask_one_batch_count = 0;
 
   if (this->output_labels_)           // generate labels?? -hlhe
@@ -1144,8 +926,9 @@ void DriveDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
     Dtype *top_label = batch->label().mutable_cpu_data();
     top_labels.push_back(top_label);
     label_mask = batch->label(1).mutable_cpu_data();
+    label_dis  = batch->label(2).mutable_cpu_data();  // to store distance to boundary 2017/05/15
     mask_one_batch_count = batch->label(1).shape()[1] * batch->label(1).shape()[2] * batch->label(1).shape()[3];
-    label_type = batch->label(2).mutable_cpu_data();  // commented by hlhe
+    label_type = batch->label(3).mutable_cpu_data();  // commented by hlhe
   }
 
   const int crop_num = this->layer_param().drive_data_param().crop_num();
@@ -1265,6 +1048,7 @@ try_again:
     }
     //LOG(INFO) << "?" << w_off << ' ' << h_off << ' ' << resize << ' ' << rmax << ' ' << rmin;
 
+    vector<Dtype*> label_dis_vec(1, label_dis);
     vector<vector<int> > bb_pts;                       // ����������bbox����
     vector<Dtype*> mask_muta_data;
     int batch_pos = item_id * mask_one_batch_count;
@@ -1289,7 +1073,8 @@ try_again:
                                               picgen,
                                               mask_muta_data,
                                               bb_pts,
-                                              is_normal);
+                                              is_normal,
+                                              label_dis_vec);
 
       if (!have_obj) // for image that has no objects
       {
@@ -1305,7 +1090,6 @@ try_again:
         //LOG(INFO)<<"try_again_count:"<<try_again_count;
     }
 
-    // ���ɷ����õı�ע
     vector<Batch<Dtype>*> batch_vec;
     batch_vec.push_back(batch);
 
@@ -1316,6 +1100,7 @@ try_again:
     if (bid+1 >= crop_num*data.car_boxes_size())
         need_new_data = true;
 
+    // image data minus mean value
     cv::Mat_<Dtype> mean_img(cheight, cwidth);
     Dtype* itop_data = top_data+item_id*channal*cheight*cwidth;
     float mat[] = { 1.f*resize,0.f,(float)-w_off, 0.f,1.f*resize,(float)-h_off };
@@ -1437,7 +1222,7 @@ int LabelAuxiliary::gen_gray_zone(vector<vector<int> >& bbs_pts)
 
 // ������ 2016/09/12 22:20
 int LabelAuxiliary::update_mask(cv::Mat& ori_mask)
-{\
+{
     // ��ͨ����,��������
     if( is_normal_status() )
     {

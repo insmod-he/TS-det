@@ -149,7 +149,7 @@ private:
     cv::Mat tmp_mask2_;
 };
 
-// 用于辅助完成标注样本的产生
+// 锟斤拷锟节革拷锟斤拷锟斤拷锟缴憋拷注锟斤拷锟斤拷锟侥诧拷锟斤拷
 class LabelAuxiliary
 {
 public:
@@ -203,8 +203,8 @@ public:
         return 0;
     }
 
-    // 是否是不需要生成gray zone的普通模式
-    // 每次都要进行计算,此处是可以进行优化的.
+    // 锟角凤拷锟角诧拷锟斤拷要锟斤拷锟斤拷gray zone锟斤拷锟斤拷通模式
+    // 每锟轿讹拷要锟斤拷锟叫硷拷锟斤拷,锟剿达拷锟角匡拷锟皆斤拷锟斤拷锟脚伙拷锟斤拷.
     bool is_normal_status()
     {
         int v = counter_%period_;
@@ -242,11 +242,11 @@ public:
 
 private:
     long counter_;
-    int  period_;           // 每隔多少次更新,实行一次普通的标注样本生成
+    int  period_;           // 每锟斤拷锟斤拷锟劫次革拷锟斤拷,实锟斤拷一锟斤拷锟斤拷通锟侥憋拷注锟斤拷锟斤拷锟斤拷锟斤拷
     float bbox_sacle_;
     cv::Mat gray_zone_;
     bool  has_inited_;
-    int update_mask(cv::Mat& ignore_mask);  // 暂时用不到
+    int update_mask(cv::Mat& ignore_mask);  // 锟斤拷时锟矫诧拷锟斤拷
 };
 
 
@@ -273,7 +273,7 @@ public:
     // load batch
     virtual void load_batch(Batch<Dtype>* batch);
 
-    LabelAuxiliary lab_auxi_;    // 目前用于生成负样本挖掘用的分类标注
+    LabelAuxiliary lab_auxi_;    // 目前锟斤拷锟斤拷锟斤拷锟缴革拷锟斤拷锟斤拷锟节撅拷锟矫的凤拷锟斤拷锟斤拷注
 };
 
 /**
