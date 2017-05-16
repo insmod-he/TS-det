@@ -53,6 +53,23 @@ void SoftmaxWithLossOLHMLayer<Dtype>::LayerSetUp(
     ignore_label_ = this->layer_param_.loss_param().ignore_label();
   }
   normalize_ = this->layer_param_.loss_param().normalize();
+  noisy_flip_= this->layer_param_.loss_param().noisy_flip();
+  noisy_flip_ = false;
+
+  // Init T_
+  if (noisy_flip_){
+    T01_ = 0.1;
+    T10_ = 0.1;
+    T00_ = 1.0 - T01_;
+    T11_ = 1.0 - T10_;
+    CHECK_EQ((T00_+T01_), 1.0);
+    CHECK_EQ((T10_+T11_), 1.0);
+    CHECK_GE(T00_, 0.0);
+    CHECK_GE(T01_, 0.0);
+    CHECK_GE(T10_, 0.0);
+    CHECK_GE(T11_, 0.0);
+    CHECK_EQ(bottom[0]->shape()[1], 2);
+  }
 }
 
 template <typename Dtype>
@@ -110,8 +127,29 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Forward_cpu(
       DCHECK_LT(label_value, prob_.shape(softmax_axis_));
 
       // negative maximum likelihood
-      loss -= log(std::max(prob_data[i * dim + label_value * inner_num_ + j],
+      if (noisy_flip_){
+          const Dtype* bottom0_data = bottom[0]->cpu_data();
+          int p0_idx = i * dim + 0*inner_num_ + j;
+          int p1_idx = i * dim + 1*inner_num_ + j;
+          float b0 = bottom0_data[p0_idx];
+          float b1 = bottom0_data[p1_idx];
+          float maxb = std::max(b0,b1);
+          float eb0 = exp(b0-maxb);
+          float eb1 = exp(b1-maxb);
+          float my_prob0 = eb0/(eb0+eb1);
+          //std::cout<<"my_prob0: "<<my_prob0<<"\tprob0: "<<prob_data[p0_idx]<<"\n";
+
+          if( 0==label_value ){
+            loss -= log(std::max( (T00_*eb0+T10_*eb1) / (eb0+eb1), float(FLT_MIN)));
+          }
+          else if( 1==label_value ){
+            loss -= log(std::max( (T11_*eb1+T01_*eb0) / (eb0+eb1), float(FLT_MIN)));
+          }
+      }
+      else{
+          loss -= log(std::max(prob_data[i * dim + label_value * inner_num_ + j],
                            Dtype(FLT_MIN)));
+      }
       ++count;
     }
   }
@@ -261,7 +299,30 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& t
         // }
         // else
         {
-          bottom_diff[i * dim + label_value * inner_num_ + j] -= 1;
+          if( noisy_flip_ ){
+              const Dtype* bottom0_data = bottom[0]->cpu_data();
+              int p0_idx = i * dim + 0 * inner_num_ + j;
+              int p1_idx = i * dim + 1 * inner_num_ + j;
+              float eb0 = exp(bottom0_data[p0_idx]);
+              float eb1 = exp(bottom0_data[p1_idx]);
+              float prob0 = prob_data[p0_idx];
+              float prob1 = prob_data[p1_idx];
+              float grad_b0 = 0.0, grad_b1 = 0.0;
+
+              if( 0==label_value ){
+                  grad_b0 = prob0 * eb1*(T10_-T00_) / (T00_*eb0+T10_*eb1);
+                  grad_b1 = prob1 * eb0*(T00_-T10_) / (T00_*eb0+T10_*eb1);
+              }
+              else if( 1==label_value ){
+                  grad_b0 = prob0 * eb1*(T11_-T01_) / (T11_*eb1+T01_*eb0);
+                  grad_b1 = prob1 * eb0*(T01_-T11_) / (T11_*eb1+T01_*eb0);
+              }
+              bottom_diff[p0_idx] = grad_b0;
+              bottom_diff[p1_idx] = grad_b1;
+          }
+          else{
+              bottom_diff[i * dim + label_value * inner_num_ + j] -= 1;
+          }
           ++count;
 
 //==========================================
@@ -460,6 +521,7 @@ int HardMiner::print_ignore()
             }
         LOG(INFO)<<"\n";
     }
+    return 0;
 }
 
 int HardMiner::set_status(int s)

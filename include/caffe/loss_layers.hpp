@@ -1010,6 +1010,11 @@ template <typename Dtype> class SoftmaxWithLossOLHMLayer : public LossLayer<Dtyp
 
   int softmax_axis_, outer_num_, inner_num_;
   Blob<int> pred_;
+  float T00_;   // flip matrix
+  float T01_;
+  float T10_;
+  float T11_;
+  bool noisy_flip_;
 };
 //==================================add hlhe========================================
 
