@@ -63,16 +63,19 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Reshape(
   softmax_layer_->Reshape(softmax_bottom_vec_, softmax_top_vec_);
   softmax_axis_ = bottom[0]->CanonicalAxisIndex(this->layer_param_.softmax_param().axis());
 
-  // outer_num -> batch_size hlhe
+  // outer_num = batch_sizen
   outer_num_ = bottom[0]->count(0, softmax_axis_);
 
-  // inner_num -> channel x (# of classifies) -hlhe
+  // inner_num = HxW
   inner_num_ = bottom[0]->count(softmax_axis_ + 1);
   CHECK_EQ(outer_num_ * inner_num_, bottom[1]->count())
       << "Number of labels must match number of predictions; "
       << "e.g., if softmax axis == 1 and prediction shape is (N, C, H, W), "
       << "label count (number of labels) must be N*H*W, "
       << "with integer values in {0, 1, ..., C-1}.";
+//   LOG(INFO)<<"outer_num_:"<<outer_num_;
+//   LOG(INFO)<<"inner_num_:"<<inner_num_;
+
   if (top.size() >= 2)
   {
     // softmax output
@@ -80,9 +83,6 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Reshape(
   }
 }
 
-
-// 明天把这部分代码改为原来标准无误的代码,
-// 将困难负样本挖掘的代码放到一个类里面实现.
 template <typename Dtype>
 void SoftmaxWithLossOLHMLayer<Dtype>::Forward_cpu(
     const vector<Blob<Dtype>*>& bottom, const vector<Blob<Dtype>*>& top)
@@ -91,14 +91,14 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Forward_cpu(
   softmax_layer_->Forward(softmax_bottom_vec_, softmax_top_vec_);
   const Dtype* prob_data = prob_.cpu_data();  // softmax_layer -> prob_ hlhe
   const Dtype* label = bottom[1]->cpu_data();
-  int dim = prob_.count() / outer_num_;
+  int dim = prob_.count() / outer_num_;  // CxHxW
   int count = 0;
   Dtype loss = 0;
 
   // outer_num -> batch_size
   for (int i = 0; i < outer_num_; ++i)
   {
-    // inner_num -> channels x (# of classifies)
+    // inner_num -> HxW
     for (int j = 0; j < inner_num_; j++)
     {
       const int label_value = static_cast<int>(label[i * inner_num_ + j]);
@@ -229,7 +229,7 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& t
     const Dtype* label = bottom[1]->cpu_data();
     int dim = prob_.count() / outer_num_;
 
-    // 困难负样本挖掘代码
+    // bottom[0] is not feature
     int class_num = bottom[0]->shape()[1];
     vector<const Dtype*> lab_vec;
     lab_vec.push_back(label);
@@ -241,21 +241,25 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& t
     int count = 0;
     for (int i = 0; i < outer_num_; ++i)
     {
+      #ifdef HLHE_DEBUG
       int pic_pos_cnt = 0;
       int pic_neg_cnt = 0;
+      #endif
+
       for (int j = 0; j < inner_num_; ++j)
       {
         const int label_value = static_cast<int>(label[i * inner_num_ + j]);
-
-        if ((has_ignore_label_ && label_value == ignore_label_) ||
-             minner.ignore_or_not(i,j, label_value))
-        {
-          for (int c = 0; c < bottom[0]->shape(softmax_axis_); ++c)
-          {
-            bottom_diff[i * dim + c * inner_num_ + j] = 0;
-          }
-        }
-        else
+   
+        // //set gradient to 0
+        // if ((has_ignore_label_ && label_value == ignore_label_) ||
+        //      minner.ignore_or_not(i,j, label_value))
+        // {
+        //   for (int c = 0; c < bottom[0]->shape(softmax_axis_); ++c)
+        //   {
+        //     bottom_diff[i * dim + c * inner_num_ + j] = 0;
+        //   }
+        // }
+        // else
         {
           bottom_diff[i * dim + label_value * inner_num_ + j] -= 1;
           ++count;
@@ -318,10 +322,6 @@ HardMiner::~HardMiner()
     }
 }
 
-
-//1.根据标注和忽略值,找出负样本
-//2.排序
-//3.同时计算正样本数量
 template <typename Dtype>
 int HardMiner::find_negatives(Blob<Dtype>& prob,
                               vector<const Dtype*>& lab_v,
@@ -342,7 +342,7 @@ int HardMiner::find_negatives(Blob<Dtype>& prob,
         {
             int lab = static_cast<int>(lab_v[0][batch_idx*inner_num + k]);
 
-            // 如果是负样本
+            // negative samples
             if(lab==0)
             {
                 float neg_prob = prob_dat[batch_idx*inner_num*class_num + k];
@@ -374,7 +374,7 @@ int HardMiner::find_negatives(Blob<Dtype>& prob,
     return 0;
 }
 
-// 不重要的负样本,设为ignore
+// ignore non-important samples
 int HardMiner::set_ignores()
 {
     assert(pIgnore_falgs_==NULL);
@@ -382,7 +382,6 @@ int HardMiner::set_ignores()
     pIgnore_falgs_ = new char[batch_size_*inner_size_];
     assert(pIgnore_falgs_);
     caffe_memset(batch_size_*inner_size_*sizeof(char), 1,pIgnore_falgs_);
-
     //print_ignore();
 
     static int cnt = 0;
@@ -404,7 +403,7 @@ int HardMiner::set_ignores()
         int pos_num = pos_num_vec_[batch_idx]*2;
         if((status_==g_NormalStatus) && pos_num>0)
         {
-            // 全都不忽略
+            // keep all
             caffe_memset(inner_size_*sizeof(char), 0,
                          pIgnore_falgs_+batch_idx*inner_size_);
             continue;
@@ -437,7 +436,6 @@ int HardMiner::set_ignores()
     return 0;
 }
 
-// 是否忽略
 bool HardMiner::ignore_or_not(int batch_idx, int pos, int lab_val)
 {
     if(lab_val==1)
