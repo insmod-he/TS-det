@@ -18,8 +18,8 @@
 using namespace std;
 namespace caffe {
 
-const float INF_DIS = 1e5;
-const float IGNORE_DIS = 1e4;
+const float INF_DIS = 1e6;
+const float IGNORE_DIS = 1e5;
 
 const int kNumData = 1;
 const int kNumLabels = 1;
@@ -272,18 +272,20 @@ int mask_erode(cv::Mat& mask, int k=3)
     return 0;
 }
 
-void get_scaled_box(float& x1, float& y1, float& x2, float& y2, 
+vector<int> get_scaled_box(float x1, float y1, float x2, float y2, 
                     float scaling, float shrink, int lab_w, int lab_h){
     float w = x2 - x1;
     float h = y2 - y1;
     CHECK_GT(w, 0);
     CHECK_GT(h, 0);
+    //LOG(INFO)<<"w:"<<w<<"\th:"<<h<<"  lab_w:"<<lab_w<<" lab_h:"<<lab_h   ;
 
     float shrink_factor = (1.0-shrink) / 2.0;
     int gxmin = cvFloor((x1 + w * shrink_factor) * scaling);  // gmin must < 640 -hlhe
     int gxmax = cvCeil ((x2 - w * shrink_factor) * scaling);   // gmax must < 480 -hlhe
     int gymin = cvFloor((y1 + h * shrink_factor) * scaling);
     int gymax = cvCeil ((y2 - h * shrink_factor) * scaling);
+    //LOG(INFO)<<"gxmin:"<<gxmin<<"  gxmax:"<<gxmax<<"  gymin:"<<gymin<<"  gymax:"<<gymax;
     if(gxmin<0){
         gxmin = 0;
     }
@@ -296,6 +298,7 @@ void get_scaled_box(float& x1, float& y1, float& x2, float& y2,
     if( gymax>=lab_h ){
         gymax = lab_h-1;
     }
+    //LOG(INFO)<<"gxmin:"<<gxmin<<"  gxmax:"<<gxmax<<"  gymin:"<<gymin<<"  gymax:"<<gymax;
 
     CHECK_LE(gxmin, gxmax);
     CHECK_LE(gymin, gymax);
@@ -348,20 +351,23 @@ void get_scaled_box(float& x1, float& y1, float& x2, float& y2,
       gymax--;
     }
 
-    x1 = gxmin;
-    x2 = gxmax;
-    y1 = gymin;
-    y2 = gymax;
-    return;
+    vector<int> ret;
+    ret.push_back(gxmin);
+    ret.push_back(gymin);
+    ret.push_back(gxmax);
+    ret.push_back(gymax);
+    return ret;
 }
 
 // Todo: remove overlaped regoin
-void find_instance_boundary_pts(vector<vector<int> >& pts_vec, vector<int>& ori_box,
+void find_instance_boundary_pts(vector<vector<int> >& pts_vec, vector<int> ori_box,
     cv::Mat box_mask, cv::Mat polygon_mask, cv::Mat ellipse_mask, bool has_poly, bool has_ellipse){
     int dx[] = {-1,0,1,1,1,0,-1,-1};
     int dy[] = {-1,-1,-1,0,1,1,1,0};
     int w = box_mask.cols;
     int h = box_mask.rows;
+    CHECK_EQ(ori_box.size(), 4);
+
     for( int y=ori_box[1]; y<=ori_box[3]; y++){
         for( int x=ori_box[0]; x<=ori_box[2]; x++){
             int v1 = int(box_mask.at<float>(y,x));
@@ -413,28 +419,50 @@ void find_instance_boundary_pts(vector<vector<int> >& pts_vec, vector<int>& ori_
     }
 }
 
-void calc_distance_to_boundary(vector<int> big_box, vector<int> small_box, int ins_idx, vector<vector<int> > boundary_pts, cv::Mat box_mask, 
+void calc_distance_to_boundary(vector<int> big_box, vector<int> small_box, float obj_size,int ins_idx, vector<vector<int> > boundary_pts, cv::Mat box_mask, 
        cv::Mat polygon_mask, cv::Mat ellipse_mask, cv::Mat& inside_dist, cv::Mat& outside_dist, bool has_poly, bool has_ellipse){
     if (boundary_pts.size()==0){
         LOG(INFO)<<"boundary_pts.size()==0";
         return;
     }
-    
+    CHECK_EQ(big_box.size(), 4);
+    CHECK_EQ(small_box.size(), 4);
+    CHECK_EQ(box_mask.rows, polygon_mask.rows);
+    CHECK_EQ(box_mask.cols, ellipse_mask.cols);
+    CHECK_EQ(box_mask.rows, inside_dist.rows);
+    CHECK_EQ(box_mask.cols, outside_dist.cols);
+    float fixed_max_dis = 20.0;
+    float max_dis = obj_size/8.0;
+    max_dis = std::min(max_dis, fixed_max_dis);
+
     for( int y=big_box[1]; y<big_box[3]; y++){
         for( int x=big_box[0]; x<big_box[2]; x++){
-            if ( y>small_box[1] && y<small_box[3] && x>small_box[0] && x<small_box[2] ){
-                continue;
-            }
+            // if ( y>small_box[1] && y<small_box[3] && x>small_box[0] && x<small_box[2] ){
+            //     continue;
+            // }
             
             vector<int> dis2_vec;
             for( int k=0; k<boundary_pts.size(); k++){
                 int _x = boundary_pts[k][0];
                 int _y = boundary_pts[k][1];
-                int dis2 = (_x-x)*(_x-x) + (_y-y)*(_y-y);
+                int dx = _x - x;
+                int dy = _y - y;
+                if( std::abs(dx)>max_dis || std::abs(dy)>max_dis ){
+                    continue;
+                }
+
+                int dis2 = dx*dx + dy*dy;
                 dis2_vec.push_back(dis2);
             }
-            sort(dis2_vec.begin(), dis2_vec.end());
-            float dis = sqrt(dis2_vec[0]);
+
+            float dis = max_dis;
+            if ( dis2_vec.size()>0 ){
+                sort(dis2_vec.begin(), dis2_vec.end());
+                dis = sqrt(dis2_vec[0]);
+            }
+            else{
+                dis = INF_DIS;
+            }
 
             int v1 = int(box_mask.at<float>(y,x));
             int v2 = int(polygon_mask.at<float>(y,x));
@@ -445,6 +473,8 @@ void calc_distance_to_boundary(vector<int> big_box, vector<int> small_box, int i
             if( has_ellipse ){
                 v1 = v1 * int(v3>-1);
             }
+            CHECK_GT(obj_size, 1);
+            //LOG(INFO)<<"dis:"<<dis;
 
             // "1" based index
             if( v1>0){
@@ -476,6 +506,42 @@ void calc_distance_to_boundary(vector<int> big_box, vector<int> small_box, int i
     }
 }
 
+int draw_mask(const DrivingData& data, cv::Mat& poly_mask, cv::Mat& ellipse_mask, 
+        int idx, int w_off, int h_off, float scaling, float resize)
+{
+    cv::Scalar idcolor(idx);
+    caffe::CarBoundingBox box = data.car_boxes(idx);
+    if (box.poly_mask_size()>2)
+    {
+        std::vector<cv::Point2i> pts;
+        for (int j=0; j<box.poly_mask_size(); j++)
+        {
+            caffe::FixedPoint p = box.poly_mask(j);
+            pts.push_back(cv::Point2i((int) ((p.x()*resize-w_off)*scaling),
+                                    (int) ((p.y()*resize-h_off)*scaling)));
+        }
+        std::vector< std::vector<cv::Point2i> > ptss;
+        ptss.push_back(pts);
+        cv::fillPoly(poly_mask, ptss, idcolor);
+    }
+    if (box.ellipse_mask_size() > 2)
+    {
+        std::vector<cv::Point2i> pts;
+        for (int j=0; j<box.ellipse_mask_size(); j++)
+        {
+            caffe::FixedPoint p = box.ellipse_mask(j);
+            pts.push_back(cv::Point2i((int) ((p.x()*resize-w_off)*scaling),
+                                    (int) ((p.y()*resize-h_off)*scaling)));
+        }
+        int tmp=0;
+        while (pts.size()<5)
+            pts.push_back(pts[tmp++]);
+
+        cv::RotatedRect rbox = cv::fitEllipse(pts);
+        cv::ellipse(ellipse_mask, rbox, idcolor, -1);
+    }
+    return 0;
+}
 
 template<typename Dtype>
 bool ReadBoundingBoxLabelToDatum(
@@ -565,38 +631,26 @@ bool ReadBoundingBoxLabelToDatum(
                    full_label_width, CV_32F,
                    cv::Scalar(-1.0));
 
-  cv::Mat box_mask_origin(full_label_height,
-                   full_label_width, CV_32F,
-                   cv::Scalar(-1.0));
-  cv::Mat dis_inside(full_label_height,
-                   full_label_width, CV_32F,
-                   cv::Scalar(INF_DIS));
-  cv::Mat dis_outside(full_label_height,
-                   full_label_width, CV_32F,
-                   cv::Scalar(INF_DIS));
-
-  cv::Mat debug_boundary(full_label_height,
+  // masks
+  cv::Mat sbox_mask(full_label_height,
                    full_label_width, CV_8U,
                    cv::Scalar(255));
 
-#define MASK_ORI_CHN       0
-#define GEN_MASK1_MASK2
-#ifdef GEN_MASK1_MASK2
-    cv::Mat path1_mask(full_label_height,
-                       full_label_width,
-                       CV_32F,
-                       cv::Scalar(BACKGROUND_LAB));
+  int crop_img_w = param.cropped_width();
+  int crop_img_h = param.cropped_height();
+  cv::Mat box_mask_origin(crop_img_h, crop_img_w,
+                  CV_32F, cv::Scalar(-1.0));
+  cv::Mat poly_mask_origin(crop_img_h, crop_img_w,
+                  CV_32F, cv::Scalar(-1.0));
+  cv::Mat ellipse_mask_origin(crop_img_h, crop_img_w,
+                  CV_32F, cv::Scalar(-1.0));
+  cv::Mat dis_inside(crop_img_h, crop_img_w,
+                  CV_32F, cv::Scalar(INF_DIS));
+  cv::Mat dis_outside(crop_img_h, crop_img_w,
+                  CV_32F, cv::Scalar(INF_DIS));
 
-    cv::Mat path2_mask(full_label_height,
-                       full_label_width,
-                       CV_32F,
-                       cv::Scalar(BACKGROUND_LAB));
-
-    cv::Mat path3_mask(full_label_height,
-                       full_label_width,
-                       CV_32F,
-                       cv::Scalar(BACKGROUND_LAB));
-#endif
+  cv::Mat debug_boundary(crop_img_h, crop_img_w,
+                  CV_8U, cv::Scalar(255));
 
   vector<bool> has_ellipse_mask(data.car_boxes_size()+1, false);
   vector<int> itypes(data.car_boxes_size()+1);
@@ -700,28 +754,19 @@ bool ReadBoundingBoxLabelToDatum(
     {
       gymax--;
     }
-
+ 
     // boxes that remain
     cv::Rect r(gxmin, gymin, gxmax - gxmin + 1, gymax - gymin + 1);
     bb_pushback(bbox_pts, gxmin, gxmax, gymin, gymax);
 
     // calc dis
     float big_box_shrink = 1.3;
-    float small_box_shrink = 0.6;
-    float big_x1=xmin, big_y1=ymin, big_x2=xmax, big_y2=ymax;
-    float small_x1=xmin, small_y1=ymin, small_x2=xmax, small_y2=ymax;
-    float ori_x1=xmin, ori_y1=ymin, ori_x2=xmax, ori_y2=ymax;
-    get_scaled_box(big_x1, big_y1, big_x2, big_y2, scaling, 
-         big_box_shrink, full_label_width, full_label_height);
-    get_scaled_box(small_x1, small_y1, small_x2, small_y2, scaling, 
-         small_box_shrink, full_label_width, full_label_height);
-    get_scaled_box(ori_x1, ori_y1, ori_x2, ori_y2, scaling, 
-         1.0, full_label_width, full_label_height);
+    float small_box_shrink = 0.5;
+    vector<int> big_box = get_scaled_box(xmin, ymin, xmax, ymax, 1.0,   big_box_shrink, crop_img_w, crop_img_h);
+    vector<int> small_box = get_scaled_box(xmin, ymin, xmax, ymax, 1.0, small_box_shrink, crop_img_w, crop_img_h);
+    vector<int> ori_box = get_scaled_box(xmin, ymin, xmax, ymax, 1.0, 1.0, crop_img_w, crop_img_h);
 
-    // LOG(INFO)<<"small_x1:"<<small_x1<<" small_y1:"<<small_y1<<" small_x2:"<<small_x2<<" small_y2:"<<small_y2;
-    // LOG(INFO)<<"big_x1:"<<big_x1<<" big_y1:"<<big_y1<<" big_x2:"<<big_x2<<" big_y2:"<<big_y2;
-    // LOG(INFO)<<"ori_x1:"<<ori_x1<<" ori_y1:"<<ori_y1<<" ori_x2:"<<ori_x2<<" ori_y2:"<<ori_y2;
-    cv::Rect ori_rect(ori_x1, ori_y1, ori_x2-ori_x1+1, ori_y2-ori_y1+1);
+    cv::Rect ori_rect(ori_box[0], ori_box[1], ori_box[2]-ori_box[0]+1, ori_box[3]-ori_box[1]+1);
     cv::Scalar idc(i+1);
     cv::rectangle(box_mask_origin, ori_rect, idc, -1);
 
@@ -745,6 +790,8 @@ bool ReadBoundingBoxLabelToDatum(
 
     if (param.use_mask())
     {
+        draw_mask(data, poly_mask_origin, ellipse_mask_origin, i, w_off, h_off, 1.0, resize);
+        
         caffe::CarBoundingBox box = data.car_boxes(i);
         if (box.poly_mask_size()>2)
         {
@@ -779,18 +826,24 @@ bool ReadBoundingBoxLabelToDatum(
         }
     }
 
-    // a.Find boudary points
+    //a.Find boudary points
     vector<vector<int> > boundary_pts_vec;
-    vector<int> ori_box;
-    ori_box.push_back(ori_x1); ori_box.push_back(ori_y1);
-    ori_box.push_back(ori_x2); ori_box.push_back(ori_y2);
-    find_instance_boundary_pts(boundary_pts_vec, ori_box, 
-        box_mask_origin, poly_mask, ellipse_mask, has_poly_mask[i], has_ellipse_mask[i]);
+    find_instance_boundary_pts(boundary_pts_vec, ori_box, box_mask_origin,
+        poly_mask_origin, ellipse_mask_origin, has_poly_mask[i], has_ellipse_mask[i]);
     
     // for( int y=0; y<box_mask_origin.rows; y++){
     //     for( int x=0; x<box_mask_origin.cols; x++){
-    //         float v = box_mask_origin.at<float>(y,x);
-    //         if( v==(i+1) ){
+    //         float v1 = box_mask_origin.at<float>(y,x);
+    //         int v2 = int(poly_mask_origin.at<float>(y,x));
+    //         int v3 = int(ellipse_mask_origin.at<float>(y,x));
+    //         if( has_poly_mask[i] ){
+    //             v1 = v1 * int(v2>-1);
+    //         }
+    //         if( has_ellipse_mask[i] ){
+    //             v1 = v1 * int(v3>-1);
+    //         }
+
+    //         if( v1>0 ){
     //             debug_boundary.at<unsigned char>(y,x) = 64;
     //         }
     //     }
@@ -798,153 +851,42 @@ bool ReadBoundingBoxLabelToDatum(
     // for( int k=0; k<boundary_pts_vec.size(); k++){
     //     int y = boundary_pts_vec[k][1];
     //     int x = boundary_pts_vec[k][0];
-    //     debug_boundary.at<unsigned char>(y,x) = 0;
+    //     debug_boundary.at<unsigned char>(y,x) = 128;
     // }
 
-    LOG(INFO)<<"boundary_pts_vec.size() "<<boundary_pts_vec.size();
+    //LOG(INFO)<<"boundary_pts_vec.size() "<<boundary_pts_vec.size();
 
     // b.Calc distance
+    float obj_size = std::min(ori_box[3]-ori_box[1], ori_box[2]-ori_box[0]);
+    //LOG(INFO)<<"obj_size:"<<obj_size;
     if( boundary_pts_vec.size()>0 ){
-        vector<int> small_box; vector<int> big_box;
-        small_box.push_back(small_x1); small_box.push_back(small_y1);
-        small_box.push_back(small_x2); small_box.push_back(small_y2);
-        big_box.push_back(big_x1); big_box.push_back(big_y1);
-        big_box.push_back(big_x2); big_box.push_back(big_y2);
-
-        calc_distance_to_boundary(big_box, small_box, i+1, boundary_pts_vec, box_mask_origin, 
-          poly_mask, ellipse_mask, dis_inside, dis_outside, has_poly_mask[i], has_ellipse_mask[i]);
+        calc_distance_to_boundary(big_box, small_box, obj_size, i+1, boundary_pts_vec, box_mask_origin, 
+          poly_mask_origin, ellipse_mask_origin, dis_inside, dis_outside, has_poly_mask[i], has_ellipse_mask[i]);
     }
 
-// generate mask1
-// 32~64 64~108 108~180
-#ifdef GEN_MASK1_MASK2
-    float rec_rate_th = 0.8;
-    int gt_res = 4;
-    int half_m1_concep_f = PATH1_RECIPTION_FILD / gt_res / 2;
-    int half_m2_concep_f = PATH2_RECIPTION_FILD / gt_res / 2;
-
-    int m1_bb_xmin = int((xmin+0.5)/gt_res);
-    int m1_bb_xmax = int((xmax+0.5)/gt_res);
-    int m1_bb_ymin = int((ymin+0.5)/gt_res);
-    int m1_bb_ymax = int((ymax+0.5)/gt_res);
-    m1_bb_xmax = std::min<int>(m1_bb_xmax, full_label_width-1);
-    m1_bb_ymax = std::min<int>(m1_bb_ymax, full_label_height-1);
-
-    int bb_w = m1_bb_xmax-m1_bb_xmin;
-    int bb_h = m1_bb_ymax-m1_bb_ymin;
-    int bb_size = std::max<int>(xmax-xmin, ymax-ymin);
-    //LOG(INFO)<<"bb_size:"<<bb_size;
-
-    // ע������bb_size��λ��
-    if( !normal_status )
-    {
-        rescale_bb(m1_bb_xmin,m1_bb_xmax,
-                   m1_bb_ymin,m1_bb_ymax,
-                   full_label_height,
-                   full_label_width, 1.4f);
-    }
-
-    for (int x_pos=m1_bb_xmin; x_pos<=m1_bb_xmax; x_pos++)
-    {
-        for(int y_pos=m1_bb_ymin; y_pos<=m1_bb_ymax; y_pos++)
-        {
-            int concep_xmin = x_pos - half_m1_concep_f;
-            int concep_xmax = x_pos + half_m1_concep_f;
-            int concep_ymin = y_pos - half_m1_concep_f;
-            int concep_ymax = y_pos + half_m1_concep_f;
-
-            path1_mask.at<float>(y_pos,x_pos) = GRAY_ZONE_LAB;
-            path2_mask.at<float>(y_pos,x_pos) = GRAY_ZONE_LAB;
-            path3_mask.at<float>(y_pos,x_pos) = GRAY_ZONE_LAB;
-
-            // path1 mask
-            if(bb_size<=PATH1_MAX_OBJ_SIZE)
-            {
-                float intersec = (float)calc_cross(m1_bb_xmin,m1_bb_xmax,
-                                                   m1_bb_ymin,m1_bb_ymax,
-                                                 concep_xmin,concep_xmax,
-                                                 concep_ymin,concep_ymax);
-                float rate = intersec / (bb_w*bb_h);
-                if (rate > rec_rate_th)
-                {
-                    if(normal_status){
-                        path1_mask.at<float>(y_pos,x_pos) = TRAFFIC_SIGN_LAB;  // target!
-                    }
-                    else {   // ���Ǳ�־��Χ��Ҫ���Ե�����,���������߶ȶ����ɵĺ���
-                        path1_mask.at<float>(y_pos,x_pos) = IGNORE_EDGE_LAB;
-                    }
-                }
-            }
-            else if(bb_size>PATH3_MIN_OBJ_SIZE)
-            {
-                path1_mask.at<float>(y_pos,x_pos) = BACKGROUND_LAB;
-            }
-
-            // path2 mask
-            concep_xmin = x_pos - half_m2_concep_f;
-            concep_xmax = x_pos + half_m2_concep_f;
-            concep_ymin = y_pos - half_m2_concep_f;
-            concep_ymax = y_pos + half_m2_concep_f;
-            if (bb_size<=PATH2_MAX_OBJ_SIZE && bb_size>PATH2_MIN_OBJ_SIZE)
-            {
-                float intersec = (float)calc_cross(m1_bb_xmin,m1_bb_xmax,
-                                                   m1_bb_ymin,m1_bb_ymax,
-                                                 concep_xmin,concep_xmax,
-                                                 concep_ymin,concep_ymax);
-                float rate = intersec / (bb_w*bb_h);
-                if (rate > rec_rate_th)
-                {
-                    if( normal_status )
-                    {
-                        path2_mask.at<float>(y_pos,x_pos) = TRAFFIC_SIGN_LAB;  // target!
-                    }
-                    else
-                    {   // ���Ǳ�־��Χ��Ҫ���Ե�����,���������߶ȶ����ɵĺ���
-                        path2_mask.at<float>(y_pos,x_pos) = IGNORE_EDGE_LAB;
-                    }
-                }
-            }
-
-            // path3 mask
-            if(bb_size>PATH3_MIN_OBJ_SIZE)
-            {
-                if( normal_status )
-                {
-                    path3_mask.at<float>(y_pos,x_pos) = TRAFFIC_SIGN_LAB;  // target!
-                }
-                else
-                {   // ���Ǳ�־��Χ��Ҫ���Ե�����,���������߶ȶ����ɵĺ���
-                    path3_mask.at<float>(y_pos,x_pos) = IGNORE_EDGE_LAB;
-                }
-            }
-            else if(bb_size<=PATH1_MAX_OBJ_SIZE)
-            {
-                path3_mask.at<float>(y_pos,x_pos) = BACKGROUND_LAB;
-            }
-        }
-    }
-#endif
-
-    // dirty code copy
     hlhe_valid_bbox_cnt += 1; //hlhe
   }
-  
-  // show dis_inside,dis_outside
-  for( int y=0; y<box_mask_origin.rows; y++){
-        for( int x=0; x<box_mask_origin.cols; x++){
-            float v = dis_outside.at<float>(y,x);
-            if( v>10 ){
-                v = 10.0;
-            }
-            if( v<0 ){
-                LOG(FATAL)<<"v<0";
-            }
-            v = int(v/10.0 * 255);
-            debug_boundary.at<unsigned char>(y,x) = v;
-        }
-    }
+  cv::resize(dis_inside, dis_inside,  cv::Size(full_label_width, full_label_height) );
+  cv::resize(dis_outside, dis_outside, cv::Size(full_label_width, full_label_height) );
 
-  // debug save
+  // show dis_inside,dis_outside
+  /*float max_dis = 16;
+  for( int y=0; y<box_mask_origin.rows; y++){
+    for( int x=0; x<box_mask_origin.cols; x++){
+        float v = dis_inside.at<float>(y,x);
+        if( v>max_dis ){
+            v = max_dis;
+        }
+        if( v<0 ){
+            LOG(FATAL)<<"v<0";
+        }
+        v = int(v/max_dis * 255);
+        debug_boundary.at<unsigned char>(y,x) = v;
+    }
+  }
+  cv::resize(debug_boundary, debug_boundary, 
+       cv::Size(full_label_width, full_label_height) );
+
   strstream ss;
   string save_root = "/data2/HongliangHe/work2017/TrafficSign/node113/noisy_hm/my/0515_test/debug_imgs/";
   string rnd_name = "";
@@ -953,7 +895,7 @@ bool ReadBoundingBoxLabelToDatum(
   ss>>rnd_name;
   save_name = save_root + rnd_name + "_bdy.jpg";
   imwrite(save_name.c_str(), debug_boundary);
-  LOG(INFO)<<save_name<<" saved!";
+  LOG(INFO)<<save_name<<" saved!";*/
 
   datum->set_channels(num_total_labels);
   datum->set_height(full_label_height);
@@ -1053,125 +995,6 @@ bool ReadBoundingBoxLabelToDatum(
       ptr++;
     }
   }
-
-// fix the label edge, to get accurate label
-#ifdef GEN_MASK1_MASK2
-
-  for(int i=0; i<path1_mask.cols; i++)
-  {
-      for( int j=0; j<path1_mask.rows; j++)
-      {
-          float mask_ori_val = box_mask.at<float>(j,i);
-          float mask1_val = path1_mask.at<float>(j,i);
-          float mask2_val = path2_mask.at<float>(j,i);
-          float mask3_val = path3_mask.at<float>(j,i);
-
-          // ƽʱ����ͨ����,��ǰ��bbox�Ļ����Ͼ��ޱ�ע
-          if( normal_status )
-          {
-              // fix the edge zone to be "gray zone" -hlhe
-              if( mask1_val!=BACKGROUND_LAB &&
-                  mask_ori_val==-1)
-              {
-                  path1_mask.at<float>(j,i) = BACKGROUND_LAB;
-              }
-
-              if( mask2_val!=BACKGROUND_LAB &&
-                  mask_ori_val==-1)
-              {
-                  path2_mask.at<float>(j,i) = BACKGROUND_LAB;
-              }
-
-              if( mask3_val!=BACKGROUND_LAB &&
-                  mask_ori_val==-1)
-              {
-                  path3_mask.at<float>(j,i) = BACKGROUND_LAB;
-              }
-          }
-          else // �������ھ�,��Ե������������
-          {
-              // mask1
-              if( IGNORE_EDGE_LAB==mask1_val )      //��Ҫ����������1
-              {
-                  if( mask_ori_val!=-1 )
-                      path1_mask.at<float>(j,i) = TRAFFIC_SIGN_LAB;
-                  else
-                      path1_mask.at<float>(j,i) = GRAY_ZONE_LAB;
-              }
-              else if( TRAFFIC_SIGN_LAB==mask1_val ) //��Ҫ����������2
-              {
-                  if( -1==mask_ori_val )
-                      path1_mask.at<float>(j,i) = BACKGROUND_LAB;
-
-              }
-
-              // mask2
-              if( IGNORE_EDGE_LAB==mask2_val )
-              {
-                  if( mask_ori_val!=-1 )
-                      path2_mask.at<float>(j,i) = TRAFFIC_SIGN_LAB;
-                  else
-                      path2_mask.at<float>(j,i) = GRAY_ZONE_LAB;
-              }
-              else if( TRAFFIC_SIGN_LAB==mask2_val )
-              {
-                  if( -1==mask_ori_val )
-                      path2_mask.at<float>(j,i) = BACKGROUND_LAB;
-              }
-
-              // mask3
-              if( IGNORE_EDGE_LAB==mask3_val )
-              {
-                  if( mask_ori_val!=-1 )
-                      path3_mask.at<float>(j,i) = TRAFFIC_SIGN_LAB;
-                  else
-                      path3_mask.at<float>(j,i) = GRAY_ZONE_LAB;
-              }
-              else if( TRAFFIC_SIGN_LAB==mask3_val )
-              {
-                  if( -1==mask_ori_val )
-                      path3_mask.at<float>(j,i) = BACKGROUND_LAB;
-              }
-          }
-      }
-  }
-
-  assert(my_mask_ptr.size()==1);
-  Dtype* mask_ptr = my_mask_ptr[0];
-  int ncols = path1_mask.cols;
-  int nrows = path1_mask.rows;
-
-  for(int mask_idx=0; mask_idx<MASK_NUM; mask_idx++)
-  {
-      for(int j=0; j<nrows; j++)
-      {
-          for(int i=0; i<ncols; i++)
-          {
-              Dtype val = 0.f;
-              switch(mask_idx)
-              {
-              case 0:
-                  val = (Dtype)path1_mask.at<float>(j,i);
-                  break;
-              case 1:
-                  val = (Dtype)path2_mask.at<float>(j,i);
-                  break;
-              case 2:
-                  val = (Dtype)path3_mask.at<float>(j,i);
-                  break;
-              default:
-                  assert(0);
-              }
-
-              int offset = mask_idx*ncols*nrows + j*ncols + i;
-              mask_ptr[offset] = val;
-          }
-      }
-  }
-
-
-#endif
-
 
   CHECK_EQ(datum->float_data_size(),
            num_total_labels * full_label_height * full_label_width);
