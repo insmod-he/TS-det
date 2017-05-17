@@ -391,7 +391,7 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& t
         }
       }
 
-      if( tic%100==0 ){
+      if( tic%1000==0 ){
         for( int y=0; y<120; y++){
             for( int x=0; x<160; x++){
                 int idx = y*160 + x;
@@ -401,7 +401,7 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& t
         }
         string save_root = "/data2/HongliangHe/work2017/TrafficSign/node113/noisy_hm/my/0515_test/debug_imgs/";
         string save_name = ""; string rnd_name = "";
-        char ss[256] = {}; sprintf(ss, "%d", rand()); rnd_name = ss;
+        char ss[256] = {}; sprintf(ss, "%d", tic); rnd_name = ss;
         save_name = save_root + rnd_name + "_in.jpg";
         imwrite(save_name.c_str(), show_mat1);
         LOG(INFO)<<save_name<<" saved!";
