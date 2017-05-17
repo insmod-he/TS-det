@@ -54,7 +54,6 @@ void SoftmaxWithLossOLHMLayer<Dtype>::LayerSetUp(
   }
   normalize_ = this->layer_param_.loss_param().normalize();
   noisy_flip_= this->layer_param_.loss_param().noisy_flip();
-  noisy_flip_ = false;
 
   // Init T_
   if (noisy_flip_){
@@ -69,6 +68,14 @@ void SoftmaxWithLossOLHMLayer<Dtype>::LayerSetUp(
     CHECK_GE(T10_, 0.0);
     CHECK_GE(T11_, 0.0);
     CHECK_EQ(bottom[0]->shape()[1], 2);
+  }
+  else{
+      for( int k=0; k<5; k++){
+        LOG(INFO)<<"Attension!!!!!\n";
+        sleep(1);
+      }
+      LOG(INFO)<<"Use normal softmax loss!\n";
+      sleep(5);
   }
 }
 
@@ -136,7 +143,7 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Forward_cpu(
           float maxb = std::max(b0,b1);
           float eb0 = exp(b0-maxb);
           float eb1 = exp(b1-maxb);
-          float my_prob0 = eb0/(eb0+eb1);
+          //float my_prob0 = eb0/(eb0+eb1);
           //std::cout<<"my_prob0: "<<my_prob0<<"\tprob0: "<<prob_data[p0_idx]<<"\n";
 
           if( 0==label_value ){
@@ -249,6 +256,7 @@ template <typename Dtype>
 void SoftmaxWithLossOLHMLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
     const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom)
 {
+  static unsigned long tic = 0;
   if (propagate_down[1])
   {
     LOG(FATAL) << this->type()
@@ -277,32 +285,68 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& t
     //minner.print_ignore();
 
     int count = 0;
+    const Dtype* dist = bottom[2]->cpu_data();
     for (int i = 0; i < outer_num_; ++i)
     {
+      //#define HLHE_DEBUG
       #ifdef HLHE_DEBUG
       int pic_pos_cnt = 0;
       int pic_neg_cnt = 0;
       #endif
 
+      cv::Mat show_mat1(120, 160, CV_8U, cv::Scalar(255));
       for (int j = 0; j < inner_num_; ++j)
       {
-        const int label_value = static_cast<int>(label[i * inner_num_ + j]);
+        int label_value = static_cast<int>(label[i * inner_num_ + j]);
    
-        // //set gradient to 0
-        // if ((has_ignore_label_ && label_value == ignore_label_) ||
-        //      minner.ignore_or_not(i,j, label_value))
-        // {
-        //   for (int c = 0; c < bottom[0]->shape(softmax_axis_); ++c)
-        //   {
-        //     bottom_diff[i * dim + c * inner_num_ + j] = 0;
-        //   }
-        // }
-        // else
+        // set gradient to 0
+        if ((has_ignore_label_ && label_value == ignore_label_) ||
+             minner.ignore_or_not(i,j, label_value))
+        {
+          for (int c = 0; c < bottom[0]->shape(softmax_axis_); ++c)
+          {
+            bottom_diff[i * dim + c * inner_num_ + j] = 0;
+          }
+        }
+        else
         {
           if( noisy_flip_ ){
+              int batch_start = i*2*inner_num_;
+              int p0_idx = batch_start + 0 * inner_num_ + j;
+              int p1_idx = batch_start + 1 * inner_num_ + j;
+              const float max_inside_dis = 8.0;
+              const float max_outside_dis = 12.0;
+
+              CHECK_EQ(bottom.size(), 3);
+              CHECK_EQ(bottom[2]->shape()[1], 2);
+              float inside_dis  = dist[p0_idx];  // inside distance
+              float outside_dis = dist[p1_idx];  // outside distance
+              
+              // calc flip probability
+              if( inside_dis<max_inside_dis && outside_dis<max_outside_dis \
+                    && inside_dis>4 && outside_dis>4 ){
+                label_value = ignore_label_;
+              }
+
+              if( outside_dis<max_outside_dis && outside_dis>inside_dis ){
+                  float r = outside_dis/max_outside_dis*0.5;
+                  T00_ = 0.5 + r;
+                  T11_ = 0.5 - r;
+              }
+              else if( inside_dis<max_inside_dis && inside_dis>outside_dis ){
+                  float r = inside_dis/max_inside_dis*0.5;
+                  T00_ = 0.5 - r;
+                  T11_ = 0.5 + r;
+              }
+              else{
+                  T00_ = 1.0;
+                  T11_ = 1.0;
+              }
+              T01_ = 1.0 - T00_;
+              T10_ = 1.0 - T11_;
+
+              // calc gradicent
               const Dtype* bottom0_data = bottom[0]->cpu_data();
-              int p0_idx = i * dim + 0 * inner_num_ + j;
-              int p1_idx = i * dim + 1 * inner_num_ + j;
               float eb0 = exp(bottom0_data[p0_idx]);
               float eb1 = exp(bottom0_data[p1_idx]);
               float prob0 = prob_data[p0_idx];
@@ -310,12 +354,15 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& t
               float grad_b0 = 0.0, grad_b1 = 0.0;
 
               if( 0==label_value ){
-                  grad_b0 = prob0 * eb1*(T10_-T00_) / (T00_*eb0+T10_*eb1);
-                  grad_b1 = prob1 * eb0*(T00_-T10_) / (T00_*eb0+T10_*eb1);
+                  // hua jian! c0 = (T10_-T00_) / (T00_*eb0+T10_*eb1)
+                  float v = (T10_-T00_) / (T00_*eb0+T10_*eb1);
+                  grad_b0 = prob0 * eb1 * v;
+                  grad_b1 = prob1 * eb0 * v * -1.0;
               }
               else if( 1==label_value ){
-                  grad_b0 = prob0 * eb1*(T11_-T01_) / (T11_*eb1+T01_*eb0);
-                  grad_b1 = prob1 * eb0*(T01_-T11_) / (T11_*eb1+T01_*eb0);
+                  float v = (T11_-T01_) / (T11_*eb1+T01_*eb0);
+                  grad_b0 = prob0 * eb1 * v;
+                  grad_b1 = prob1 * eb0 * v * -1.0;
               }
               bottom_diff[p0_idx] = grad_b0;
               bottom_diff[p1_idx] = grad_b1;
@@ -325,23 +372,39 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& t
           }
           ++count;
 
-//==========================================
-#ifdef HLHE_DEBUG
-          if(label_value==0)
-          {
-              pic_neg_cnt+=1;
-          }
-          else if(label_value==1)
-          {
-              pic_pos_cnt+=1;
-          }
-          else
-          {
-              assert(1);
-          }
-#endif
-//==========================================
+        //==========================================
+        #ifdef HLHE_DEBUG
+                if(label_value==0)
+                {
+                    pic_neg_cnt+=1;
+                }
+                else if(label_value==1)
+                {
+                    pic_pos_cnt+=1;
+                }
+                else
+                {
+                    assert(1);
+                }
+        #endif
+        //==========================================
         }
+      }
+
+      if( tic%100==0 ){
+        for( int y=0; y<120; y++){
+            for( int x=0; x<160; x++){
+                int idx = y*160 + x;
+                int v = minner.ignore_or_not(i,idx, 0);
+                show_mat1.at<unsigned char>(y,x) = v*255;
+            }
+        }
+        string save_root = "/data2/HongliangHe/work2017/TrafficSign/node113/noisy_hm/my/0515_test/debug_imgs/";
+        string save_name = ""; string rnd_name = "";
+        char ss[256] = {}; sprintf(ss, "%d", rand()); rnd_name = ss;
+        save_name = save_root + rnd_name + "_in.jpg";
+        imwrite(save_name.c_str(), show_mat1);
+        LOG(INFO)<<save_name<<" saved!";
       }
 
 #ifdef HLHE_DEBUG
@@ -361,6 +424,7 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& t
       caffe_scal(prob_.count(), loss_weight / outer_num_, bottom_diff);
     }
   }
+  tic += 1;
 }
 
 
@@ -461,36 +525,38 @@ int HardMiner::set_ignores()
 
     for(int batch_idx=0; batch_idx<batch_size_; batch_idx++)
     {
-        int pos_num = pos_num_vec_[batch_idx]*2;
-        if((status_==g_NormalStatus) && pos_num>0)
-        {
-            // keep all
-            caffe_memset(inner_size_*sizeof(char), 0,
-                         pIgnore_falgs_+batch_idx*inner_size_);
-            continue;
-        }
-
+        bool has_no_positive = false;
+        int pos_num = pos_num_vec_[batch_idx];  // now 1:2
         if(pos_num==0)
         {
+            has_no_positive = true;
             pos_num = MIN_POS_NUM;
         }
 
         int idx = 0;
+        vector<int> non_hard_vec;
         std::map<float, int >::iterator it = negatives_vec_[batch_idx].begin();
         for(; it!=negatives_vec_[batch_idx].end(); ++it)
         {
             int sample_idx = it->second;
             sample_idx += batch_idx*inner_size_;
 
-            if(idx<pos_num)
-            {
+            if(idx<pos_num){
                 pIgnore_falgs_[sample_idx] = 0;
             }
-            else
-            {
-                break;
+            else{
+                non_hard_vec.push_back(sample_idx);
             }
             idx +=1;
+        }
+
+        // half non-hard negative samples
+        if( false==has_no_positive ){
+            std::random_shuffle(non_hard_vec.begin(), non_hard_vec.end());
+            int normal_neg_num = std::min(pos_num, int(non_hard_vec.size()));
+            for( int k=0; k<normal_neg_num; k++){
+                pIgnore_falgs_[ non_hard_vec[k] ] = 0;
+            }
         }
     }
 

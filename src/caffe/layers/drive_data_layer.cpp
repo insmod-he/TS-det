@@ -131,7 +131,7 @@ void DriveDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>& bottom,
     {
       this->prefetch_[i].label(0).Reshape(label_shape);
       this->prefetch_[i].label(1).Reshape(mask_shape);
-      this->prefetch_[i].label(2).Reshape(type_shape);
+      this->prefetch_[i].label(2).Reshape(dis_shape);
       this->prefetch_[i].label(3).Reshape(type_shape);
     }
     lab_auxi_.reset_gray_zone(h, w);
@@ -374,10 +374,10 @@ void find_instance_boundary_pts(vector<vector<int> >& pts_vec, vector<int> ori_b
             int v2 = int(polygon_mask.at<float>(y,x));
             int v3 = int(ellipse_mask.at<float>(y,x));
             if( has_poly ){
-                v1 = v1 * int(v2>-1);
+                v1 = v1 * int(v2==v1);
             }
             if( has_ellipse ){
-                v1 = v1 * int(v3>-1);
+                v1 = v1 * int(v3==v1);
             }
 
             //cout<<v1<<" ";
@@ -390,21 +390,21 @@ void find_instance_boundary_pts(vector<vector<int> >& pts_vec, vector<int> ori_b
                 int near_y = y + dy[k];
                 if (near_x<0 || near_x>w-1 || near_y<0 || near_y>h-1 ){      
                     // Out of image or near pixel has 0 value
-                    vector<int> pt;
-                    pt.push_back(x);
-                    pt.push_back(y);
-                    pts_vec.push_back(pt);
-                    break;
+                    // vector<int> pt;
+                    // pt.push_back(x);
+                    // pt.push_back(y);
+                    // pts_vec.push_back(pt);
+                    // break;
                 }
                 else{
                     v1 = int(box_mask.at<float>(near_y,near_x));
                     v2 = int(polygon_mask.at<float>(near_y,near_x));
                     v3 = int(ellipse_mask.at<float>(near_y,near_x));
                     if( has_poly ){
-                        v1 = v1 * int(v2>-1);
+                        v1 = v1 * int(v2==v1);
                     }
                     if( has_ellipse ){
-                        v1 = v1 * int(v3>-1);
+                        v1 = v1 * int(v3==v1);
                     }
                     if( v1<=0 ){
                         vector<int> pt;
@@ -425,6 +425,10 @@ void calc_distance_to_boundary(vector<int> big_box, vector<int> small_box, float
         LOG(INFO)<<"boundary_pts.size()==0";
         return;
     }
+    if( obj_size<=4 ){
+        return;
+    }
+
     CHECK_EQ(big_box.size(), 4);
     CHECK_EQ(small_box.size(), 4);
     CHECK_EQ(box_mask.rows, polygon_mask.rows);
@@ -437,41 +441,39 @@ void calc_distance_to_boundary(vector<int> big_box, vector<int> small_box, float
 
     for( int y=big_box[1]; y<big_box[3]; y++){
         for( int x=big_box[0]; x<big_box[2]; x++){
-            // if ( y>small_box[1] && y<small_box[3] && x>small_box[0] && x<small_box[2] ){
-            //     continue;
-            // }
-            
-            vector<int> dis2_vec;
+
+            int pt_min_dis2 = INF_DIS;
+            int pre_min_absx = INF_DIS, pre_min_absy = INF_DIS;
             for( int k=0; k<boundary_pts.size(); k++){
                 int _x = boundary_pts[k][0];
                 int _y = boundary_pts[k][1];
-                int dx = _x - x;
-                int dy = _y - y;
-                if( std::abs(dx)>max_dis || std::abs(dy)>max_dis ){
+                int dx = std::abs(_x-x);
+                int dy = std::abs(_y-y);
+                if( dx>pre_min_absx && dy>pre_min_absy){
                     continue;
                 }
-
+                
                 int dis2 = dx*dx + dy*dy;
-                dis2_vec.push_back(dis2);
+                if (dis2<pt_min_dis2){
+                    pt_min_dis2 = dis2;
+                    pre_min_absx = dx;
+                    pre_min_absy = dy;
+                }
             }
 
-            float dis = max_dis;
-            if ( dis2_vec.size()>0 ){
-                sort(dis2_vec.begin(), dis2_vec.end());
-                dis = sqrt(dis2_vec[0]);
-            }
-            else{
-                dis = INF_DIS;
+            float dis = INF_DIS;
+            if(pt_min_dis2<INF_DIS){
+                dis = sqrt(pt_min_dis2);
             }
 
             int v1 = int(box_mask.at<float>(y,x));
             int v2 = int(polygon_mask.at<float>(y,x));
             int v3 = int(ellipse_mask.at<float>(y,x));
             if( has_poly ){
-                v1 = v1 * int(v2>-1);
+                v1 = v1 * int(v2==v1);
             }
             if( has_ellipse ){
-                v1 = v1 * int(v3>-1);
+                v1 = v1 * int(v3==v1);
             }
             CHECK_GT(obj_size, 1);
             //LOG(INFO)<<"dis:"<<dis;
@@ -509,7 +511,7 @@ void calc_distance_to_boundary(vector<int> big_box, vector<int> small_box, float
 int draw_mask(const DrivingData& data, cv::Mat& poly_mask, cv::Mat& ellipse_mask, 
         int idx, int w_off, int h_off, float scaling, float resize)
 {
-    cv::Scalar idcolor(idx);
+    cv::Scalar idcolor(idx+1);
     caffe::CarBoundingBox box = data.car_boxes(idx);
     if (box.poly_mask_size()>2)
     {
@@ -573,12 +575,6 @@ bool ReadBoundingBoxLabelToDatum(
   const float scaling = static_cast<float>(full_label_width) \
     / param.cropped_width();
   //const float resize = param.resize();
-
-  // detection and classification have different resolutions -hlhe
-  const int type_label_width = width * param.catalog_resolution();
-  const int type_label_height = height * param.catalog_resolution();
-  const int type_stride = full_label_width / type_label_width;
-
 
   // fast check 
   // Todo: ignore small boxes and unrecognize boxes
@@ -665,7 +661,6 @@ bool ReadBoundingBoxLabelToDatum(
                                  cv::Scalar(0.0)));
   }
 
-
   int hlhe_valid_bbox_cnt = 0;
   for (int i = 0; i < data.car_boxes_size(); ++i)
   {
@@ -687,16 +682,17 @@ bool ReadBoundingBoxLabelToDatum(
     float w = xmax - xmin;
     float h = ymax - ymin;
 
-    // drop boxes that unrecognize
-    if (w*h < ow*oh*unrecog_factor)    // droped here(h=0) -hlhe
-        continue;
-    if (w < 4 || h < 4) {
-      // drop boxes that are too small
+    // drop boxes that unrecognize               
+    if (w*h < ow*oh*unrecog_factor){    // droped here(h=0) -hlhe
+      continue;
+    }
+    if (w < 4 || h < 4) {  // drop boxes that are too small
       continue;
     }
 
-    if (std::max(w,h) < param.reco_min() || std::max(w,h) > param.reco_max())
-        continue;
+    if (std::max(w,h) < param.reco_min() || std::max(w,h) > param.reco_max()){
+      continue;
+    }
 
     // shrink bboxes
     int gxmin = cvFloor((xmin + w * half_shrink_factor) * scaling);  // gmin must < 640 -hlhe
@@ -866,37 +862,42 @@ bool ReadBoundingBoxLabelToDatum(
 
     hlhe_valid_bbox_cnt += 1; //hlhe
   }
-  cv::resize(dis_inside, dis_inside,  cv::Size(full_label_width, full_label_height) );
-  cv::resize(dis_outside, dis_outside, cv::Size(full_label_width, full_label_height) );
+   cv::resize(dis_inside, dis_inside,  cv::Size(full_label_width, full_label_height), 0,0, CV_INTER_LINEAR);
+   cv::resize(dis_outside, dis_outside, cv::Size(full_label_width, full_label_height), 0,0, CV_INTER_LINEAR);
 
   // show dis_inside,dis_outside
-  /*float max_dis = 16;
-  for( int y=0; y<box_mask_origin.rows; y++){
-    for( int x=0; x<box_mask_origin.cols; x++){
-        float v = dis_inside.at<float>(y,x);
-        if( v>max_dis ){
-            v = max_dis;
-        }
-        if( v<0 ){
-            LOG(FATAL)<<"v<0";
-        }
-        v = int(v/max_dis * 255);
-        debug_boundary.at<unsigned char>(y,x) = v;
-    }
-  }
-  cv::resize(debug_boundary, debug_boundary, 
-       cv::Size(full_label_width, full_label_height) );
+//   float max_dis = 16;
+//   CHECK_EQ(dis_inside.rows, debug_boundary.rows);
+//   CHECK_EQ(dis_inside.cols, debug_boundary.cols);
+//   CHECK_EQ(dis_outside.rows, debug_boundary.rows);
+//   CHECK_EQ(dis_outside.cols, debug_boundary.cols);
+//   for( int y=0; y<box_mask_origin.rows; y++){
+//     for( int x=0; x<box_mask_origin.cols; x++){
+//         float v = dis_outside.at<float>(y,x);
+//         if( v>max_dis ){
+//             v = max_dis;
+//         }
+//         if( v<0 ){
+//             LOG(FATAL)<<"v<0";
+//         }
+//         v = int(v/max_dis * 255);
+//         debug_boundary.at<unsigned char>(y,x) = v;
+//     }
+//   }
+//   cv::resize(debug_boundary, debug_boundary, 
+//        cv::Size(full_label_width, full_label_height) );
 
-  strstream ss;
-  string save_root = "/data2/HongliangHe/work2017/TrafficSign/node113/noisy_hm/my/0515_test/debug_imgs/";
-  string rnd_name = "";
-  string save_name = "";
-  ss<<Rand();
-  ss>>rnd_name;
-  save_name = save_root + rnd_name + "_bdy.jpg";
-  imwrite(save_name.c_str(), debug_boundary);
-  LOG(INFO)<<save_name<<" saved!";*/
+//   strstream ss;
+//   string save_root = "/data2/HongliangHe/work2017/TrafficSign/node113/noisy_hm/my/0515_test/debug_imgs/";
+//   string rnd_name = "";
+//   string save_name = "";
+//   ss<<Rand();
+//   ss>>rnd_name;
+//   save_name = save_root + rnd_name + "_bdy.jpg";
+//   imwrite(save_name.c_str(), debug_boundary);
+//   LOG(INFO)<<save_name<<" saved!";
 
+  //============== init ===============
   datum->set_channels(num_total_labels);
   datum->set_height(full_label_height);
   datum->set_width(full_label_width);
@@ -974,26 +975,22 @@ bool ReadBoundingBoxLabelToDatum(
     }
   }
 
-  // handle catalog
-  float *ptr = label_type;
-  for (int y = 0; y < type_label_height; ++y)
-  {
-    for (int x = 0; x < type_label_width; ++x)
-    {
-      int id = (int)(box_mask.at<float>(y*type_stride,x*type_stride));
-      if (id>=0 && id<itypes.size())
-        *ptr = itypes[id]+1;
-      else
-      if (id == -1)
-        *ptr = 0;
-      else
-      {
-          LOG(ERROR) << "invalid id " << id << " " << y << ' ' << x << ' ' <<
-                        (box_mask.at<float>(y*type_stride,x*type_stride)) << ' ' <<
-                        data.car_img_source();
+  // assign distance
+  Dtype* pdis = lab_dis_vec.at(0);
+  assert(pdis!=NULL);
+
+  for( int y=0; y<dis_inside.rows; y++){
+      for( int x=0; x<dis_inside.cols; x++){
+          int idx = y*dis_inside.cols + x;
+          pdis[idx] = (Dtype)dis_inside.at<float>(y,x);
       }
-      ptr++;
-    }
+  }
+  int inner_num = dis_outside.rows * dis_outside.cols;
+  for( int y=0; y<dis_outside.rows; y++){
+      for( int x=0; x<dis_outside.cols; x++){
+          int idx = y*dis_inside.cols + x + inner_num;
+          pdis[idx] = (Dtype)dis_outside.at<float>(y,x);
+      }
   }
 
   CHECK_EQ(datum->float_data_size(),
@@ -1053,6 +1050,7 @@ void DriveDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
   Dtype *label_mask = NULL;           // 3 path masks
   Dtype *label_dis = NULL;
   int mask_one_batch_count = 0;
+  int lab_dis_batch_num = 0;
 
   if (this->output_labels_)           // generate labels?? -hlhe
   {
@@ -1062,6 +1060,8 @@ void DriveDataLayer<Dtype>::load_batch(Batch<Dtype>* batch) {
     label_dis  = batch->label(2).mutable_cpu_data();  // to store distance to boundary 2017/05/15
     mask_one_batch_count = batch->label(1).shape()[1] * batch->label(1).shape()[2] * batch->label(1).shape()[3];
     label_type = batch->label(3).mutable_cpu_data();  // commented by hlhe
+    const vector<int> S = batch->label(2).shape();
+    lab_dis_batch_num = S[1] * S[2] * S[3];
   }
 
   const int crop_num = this->layer_param().drive_data_param().crop_num();
@@ -1181,11 +1181,12 @@ try_again:
     }
     //LOG(INFO) << "?" << w_off << ' ' << h_off << ' ' << resize << ' ' << rmax << ' ' << rmin;
 
-    vector<Dtype*> label_dis_vec(1, label_dis);
-    vector<vector<int> > bb_pts;                       // ����������bbox����
+    vector<Dtype*> label_dis_vec;
+    vector<vector<int> > bb_pts;
     vector<Dtype*> mask_muta_data;
     int batch_pos = item_id * mask_one_batch_count;
     mask_muta_data.push_back(label_mask+batch_pos); // output pointers
+    label_dis_vec.push_back(label_dis + item_id*lab_dis_batch_num);
 
     if (this->output_labels_)
     {
@@ -1301,9 +1302,9 @@ try_again:
             g_NormalStatus, g_HardMiningStatus);
   timer.Stop();
   batch_timer.Stop();
-  DLOG(INFO) << "Prefetch batch: " << batch_timer.MilliSeconds() << " ms.";
-  DLOG(INFO) << "     Read time: " << read_time / 1000 << " ms.";
-  DLOG(INFO) << "Transform time: " << trans_time / 1000 << " ms.";
+  //LOG(INFO) << "Prefetch batch: " << batch_timer.MilliSeconds() << " ms.";
+  //LOG(INFO) << "     Read time: " << read_time / 1000 << " ms.";
+  //LOG(INFO) << "Transform time: " << trans_time / 1000 << " ms.";
 }
 
 int LabelAuxiliary::gen_gray_zone(vector<vector<int> >& bbs_pts)
