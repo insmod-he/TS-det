@@ -882,7 +882,7 @@ public:
                        int inner_num,
                        int class_num);
     int set_status(int s);
-    int set_ignores();
+    int set_ignores(float normal_sample_ratio);
     bool ignore_or_not(int batch_idx, int pos,int lab_val);
     int print_ignore();
 private:

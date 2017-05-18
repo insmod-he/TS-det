@@ -445,6 +445,9 @@ message LossParameter {
   // dimesions, but not ignored instances); else, divide by batch size only.
   optional bool normalize = 2 [default = true];
   optional bool noisy_flip = 3 [default = true];
+  optional float max_inside_dis = 4 [default = 8.0];
+  optional float max_outside_dis = 5 [default = 12.0];
+  optional float normal_sample_ratio = 6 [default = 1.0];
 }
 
 // Messages that store parameters used by individual layer types follow, in

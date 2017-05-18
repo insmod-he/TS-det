@@ -207,17 +207,17 @@ public:
     // ÿ�ζ�Ҫ���м���,�˴��ǿ��Խ����Ż���.
     bool is_normal_status()
     {
-        int v = counter_%period_;
+        //int v = counter_%period_;
 
-        //return false;
-        if(v==0)
-        {
-            return true;
-        }
-        else
-        {
-            return false;
-        }
+        return false;
+        // if(v==0)
+        // {
+        //     return true;
+        // }
+        // else
+        // {
+        //     return false;
+        // }
     }
 
     int set_global_status(int& g_status, const int norm_status, const int hm_status)
