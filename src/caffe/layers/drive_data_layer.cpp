@@ -435,6 +435,7 @@ void calc_distance_to_boundary(vector<int> big_box, vector<int> small_box, float
     CHECK_EQ(box_mask.cols, ellipse_mask.cols);
     CHECK_EQ(box_mask.rows, inside_dist.rows);
     CHECK_EQ(box_mask.cols, outside_dist.cols);
+    const float invalid_neg_dis = -0.5;
     float fixed_max_dis = 20.0;
     float max_dis = obj_size/8.0;
     max_dis = std::min(max_dis, fixed_max_dis);
@@ -480,7 +481,7 @@ void calc_distance_to_boundary(vector<int> big_box, vector<int> small_box, float
 
             // "1" based index
             if( v1>0){
-                if (v1 == ins_idx){
+                if (v1 == ins_idx){  // inside the object
                     float inside_v = inside_dist.at<float>(y,x);
                     if( inside_v==INF_DIS ){
                         inside_dist.at<float>(y,x) = dis;
@@ -489,13 +490,14 @@ void calc_distance_to_boundary(vector<int> big_box, vector<int> small_box, float
                     else if( inside_v!=IGNORE_DIS ){
                         inside_dist.at<float>(y,x) = IGNORE_DIS;
                     }
+                    outside_dist.at<float>(y,x) = invalid_neg_dis;
                 }
                 else{
                     //LOG(INFO)<<"x:"<<x<<" y:"<<y<<" v1: "<<v1<<" idx:"<<ins_idx<<" overlap";
                     inside_dist.at<float>(y,x) = IGNORE_DIS;
                 }
             }
-            else{
+            else{ // outside the object
                 float outside_v = outside_dist.at<float>(y,x);
                 if( outside_v==INF_DIS ){
                     outside_dist.at<float>(y,x) = dis;
@@ -503,6 +505,7 @@ void calc_distance_to_boundary(vector<int> big_box, vector<int> small_box, float
                 else if( outside_v!=IGNORE_DIS ){
                     outside_dist.at<float>(y,x) = IGNORE_DIS;
                 }
+                inside_dist.at<float>(y,x) = invalid_neg_dis;
             }
         }   
     }
@@ -864,31 +867,30 @@ bool ReadBoundingBoxLabelToDatum(
   }
    cv::resize(dis_inside, dis_inside,  cv::Size(full_label_width, full_label_height), 0,0, CV_INTER_LINEAR);
    cv::resize(dis_outside, dis_outside, cv::Size(full_label_width, full_label_height), 0,0, CV_INTER_LINEAR);
+//    cv::resize(debug_boundary, debug_boundary, cv::Size(full_label_width, full_label_height) );
 
-  // show dis_inside,dis_outside
+//   // //show dis_inside,dis_outside
 //   float max_dis = 16;
 //   CHECK_EQ(dis_inside.rows, debug_boundary.rows);
 //   CHECK_EQ(dis_inside.cols, debug_boundary.cols);
 //   CHECK_EQ(dis_outside.rows, debug_boundary.rows);
 //   CHECK_EQ(dis_outside.cols, debug_boundary.cols);
-//   for( int y=0; y<box_mask_origin.rows; y++){
-//     for( int x=0; x<box_mask_origin.cols; x++){
-//         float v = dis_outside.at<float>(y,x);
+//   for( int y=0; y<debug_boundary.rows; y++){
+//     for( int x=0; x<debug_boundary.cols; x++){
+//         float v = dis_inside.at<float>(y,x);
 //         if( v>max_dis ){
 //             v = max_dis;
 //         }
 //         if( v<0 ){
-//             LOG(FATAL)<<"v<0";
+//             v = 0;
 //         }
 //         v = int(v/max_dis * 255);
 //         debug_boundary.at<unsigned char>(y,x) = v;
 //     }
 //   }
-//   cv::resize(debug_boundary, debug_boundary, 
-//        cv::Size(full_label_width, full_label_height) );
 
 //   strstream ss;
-//   string save_root = "/data2/HongliangHe/work2017/TrafficSign/node113/noisy_hm/my/0515_test/debug_imgs/";
+//   string save_root = "/data2/HongliangHe/work2017/TrafficSign/node113/boundary_ignore/my/0518_boundary_ignore/debug_imgs/";
 //   string rnd_name = "";
 //   string save_name = "";
 //   ss<<Rand();
