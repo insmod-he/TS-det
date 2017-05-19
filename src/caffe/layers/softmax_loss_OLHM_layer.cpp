@@ -159,6 +159,7 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Forward_cpu(
       ++count;
     }
   }
+  //LOG(INFO)<<"sample count:"<<count;
   if (normalize_)
   {
     top[0]->mutable_cpu_data()[0] = loss / count;
@@ -272,6 +273,7 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& t
     const Dtype* prob_data = prob_.cpu_data();
     caffe_copy(prob_.count(), prob_data, bottom_diff);
 
+    Dtype* mlabel = bottom[1]->mutable_cpu_data();
     const Dtype* label = bottom[1]->cpu_data();
     int dim = prob_.count() / outer_num_;
 
@@ -295,7 +297,7 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& t
       int pic_neg_cnt = 0;
       #endif
 
-      cv::Mat show_mat1(120, 160, CV_8U, cv::Scalar(255));
+      vector<int> cvec(6,0);
       for (int j = 0; j < inner_num_; ++j)
       {
         int label_value = static_cast<int>(label[i * inner_num_ + j]);
@@ -314,7 +316,6 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& t
           if( noisy_flip_ ){
               const float max_inside_dis = this->layer_param_.loss_param().max_inside_dis();
               const float max_outside_dis = this->layer_param_.loss_param().max_outside_dis();
-              const float max_dis = std::max(max_inside_dis, max_outside_dis);
               int batch_start = i*2*inner_num_;
               int p0_idx = batch_start + 0 * inner_num_ + j;
               int p1_idx = batch_start + 1 * inner_num_ + j;
@@ -323,45 +324,85 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& t
               CHECK_EQ(bottom[2]->shape()[1], 2);
               float inside_dis  = dist[p0_idx];  // inside distance
               float outside_dis = dist[p1_idx];  // outside distance
-              if( inside_dis<0 ){
-                  inside_dis = max_dis + 1.0;
-              }
-              if( outside_dis<0 ){
-                  outside_dis = max_dis + 1.0;
-              }
               
-              // invalid situation
-              bool ignore = (IGNORE_DIS==outside_dis);
-              ignore = ignore || (inside_dis<max_inside_dis && outside_dis<max_outside_dis \
-                                 && inside_dis>4 && outside_dis>4);
-              if( ignore ){
+              // discusion
+              if ( inside_dis==IGNORE_DIS || outside_dis==IGNORE_DIS ){
                 for (int c = 0; c < bottom[0]->shape(softmax_axis_); ++c)
                 {
                     bottom_diff[i * dim + c * inner_num_ + j] = 0;
                 }
-                continue;
-                for( int k=0; k<100; k++){
-                    LOG(INFO)<<"big error!!!";
-                }
+                minner.set(i,j,1);
+                label_value = 2;
               }
-
-              // we believe the distance that is smaller
-              // outside T11=1
-              if( outside_dis<max_outside_dis && outside_dis<inside_dis ){
-                  float r = outside_dis/max_outside_dis*0.5;
-                  T00_ = 0.5 - r;
-                  T11_ = 0.5 + r;
+              // a. True label=1
+              else if( 1==label_value ){
+                  T11_ = 1.0; 
+                  cvec[0] += 1;
               }
-              // inside, T00=1
-              else if( inside_dis<max_inside_dis && inside_dis<outside_dis ){
+              // b. inside the object, absolutely positive sample
+              else if( inside_dis<outside_dis && 
+                       inside_dis>max_inside_dis && outside_dis<=0 ){
+                  label_value = 1;
+                  T11_ = 1.0;
+                  cvec[1] += 1;
+              }
+              // c. inside noisy. Large inside_dis = large positive confidence
+              else if( inside_dis<=max_inside_dis && inside_dis>=0
+                       && outside_dis<=0 ){
+                  label_value = 1;
                   float r = inside_dis/max_inside_dis*0.5;
+                  T11_ = 0.5 + r;
+                  cvec[2] += 1;
+              }
+              // d. outside the object
+              else if( outside_dis>max_outside_dis && inside_dis<=0 ){
+                  label_value = 0;
+                  T00_ = 1.0;
+                  cvec[3] += 1;
+              }
+              // e. near boundary, outside the object
+              else if( outside_dis<=max_outside_dis && outside_dis>=0 
+                       && inside_dis<=0 ){
+                  label_value = 0;
+                  float r = outside_dis/max_outside_dis*0.5;
                   T00_ = 0.5 + r;
-                  T11_ = 0.5 - r;
+                  cvec[4] += 1;
               }
               else{
                   T00_ = 1.0;
                   T11_ = 1.0;
+                  cvec[5] += 1;
               }
+              // invalid situation
+            //   bool ignore = (IGNORE_DIS==outside_dis);
+            //   ignore = ignore || (inside_dis<max_inside_dis && outside_dis<max_outside_dis \
+            //                      && inside_dis>4 && outside_dis>4);
+            //   if( ignore ){
+            //     for (int c = 0; c < bottom[0]->shape(softmax_axis_); ++c)
+            //     {
+            //         bottom_diff[i * dim + c * inner_num_ + j] = 0;
+            //     }
+            //     minner.set(i,j,1);
+            //     continue;
+            //   }
+
+            //   // we believe the distance that is smaller
+            //   // outside T11=1
+            //   if( outside_dis<max_outside_dis && outside_dis<inside_dis ){
+            //       float r = outside_dis/max_outside_dis*0.5;
+            //       T00_ = 0.5 - r;
+            //       T11_ = 0.5 + r;
+            //   }
+            //   // inside, T00=1
+            //   else if( inside_dis<max_inside_dis && inside_dis<outside_dis ){
+            //       float r = inside_dis/max_inside_dis*0.5;
+            //       T00_ = 0.5 + r;
+            //       T11_ = 0.5 - r;
+            //   }
+            //   else{
+            //       T00_ = 1.0;
+            //       T11_ = 1.0;
+            //   }
               T01_ = 1.0 - T00_;
               T10_ = 1.0 - T11_;
 
@@ -385,6 +426,7 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& t
               }
               bottom_diff[p0_idx] = grad_b0;
               bottom_diff[p1_idx] = grad_b1;
+              mlabel[i * inner_num_ + j] = label_value;
           }
           else{
               bottom_diff[i * dim + label_value * inner_num_ + j] -= 1;
@@ -410,20 +452,39 @@ void SoftmaxWithLossOLHMLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& t
         }
       }
 
-      if( tic%1000==0 ){
-        for( int y=0; y<120; y++){
-            for( int x=0; x<160; x++){
-                int idx = y*160 + x;
+      int cycle = this->layer_param_.loss_param().save_cycle();
+      if( tic%cycle==0 ){
+        cv::Mat show_mat1(120, 160, CV_8U, cv::Scalar(255));
+        cv::Mat show_mat2(120, 160, CV_8U, cv::Scalar(255));
+        for( int y=0; y<show_mat1.rows; y++){
+            for( int x=0; x<show_mat1.cols; x++){
+                int idx = y*show_mat1.cols + x;
+                int idx2 = i*2*inner_num_ + idx;
                 int v = minner.ignore_or_not(i,idx, 0);
-                show_mat1.at<unsigned char>(y,x) = v*255;
+                //int label_val = static_cast<int>(label[i * inner_num_ + idx]);
+                show_mat1.at<unsigned char>(y,x) = 255 - 255*v;
+                float d = dist[idx2];
+                if( d>10 ){
+                    d = 10;
+                }
+                else if( d<0 ){
+                    d = 0;
+                }
+                show_mat2.at<unsigned char>(y,x) = 255 - d/10.0*255;
             }
         }
-        string save_root = "/data2/HongliangHe/work2017/TrafficSign/node113/noisy_hm/my/0515_test/debug_imgs/";
+        string save_root = this->layer_param_.loss_param().debug_img_dir();
         string save_name = ""; string rnd_name = "";
         char ss[256] = {}; sprintf(ss, "%d", rand()); rnd_name = ss;
-        save_name = save_root + rnd_name + "_in.jpg";
+        save_name = save_root + rnd_name + "_mining.jpg";
         imwrite(save_name.c_str(), show_mat1);
         LOG(INFO)<<save_name<<" saved!";
+
+        for(int k=0; k<cvec.size(); k++){
+            LOG(INFO)<<"situation-"<<k<<": "<<cvec[k];
+        }
+        save_name = save_root + rnd_name + "_inside_dis.jpg";
+        imwrite(save_name.c_str(), show_mat2);
       }
 
 #ifdef HLHE_DEBUG
@@ -588,6 +649,14 @@ bool HardMiner::ignore_or_not(int batch_idx, int pos, int lab_val)
 
     char v = pIgnore_falgs_[batch_idx*inner_size_ + pos];
     return v;
+}
+
+bool HardMiner::set(int batch_idx, int pos, char flag){
+    assert(pIgnore_falgs_);
+    assert(batch_idx>=0 && batch_idx<batch_size_);
+    assert(pos>=0 && pos<inner_size_);
+    pIgnore_falgs_[batch_idx*inner_size_ + pos] = flag;
+    return true;
 }
 
 int HardMiner::print_ignore()

@@ -884,6 +884,7 @@ public:
     int set_status(int s);
     int set_ignores(float normal_sample_ratio);
     bool ignore_or_not(int batch_idx, int pos,int lab_val);
+    bool set(int batch_idx, int pos, char flag);
     int print_ignore();
 private:
     vector<map<float, int > > negatives_vec_;

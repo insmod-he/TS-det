@@ -209,7 +209,7 @@ public:
     {
         //int v = counter_%period_;
 
-        return false;
+        return true;
         // if(v==0)
         // {
         //     return true;

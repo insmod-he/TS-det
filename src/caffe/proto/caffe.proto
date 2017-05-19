@@ -448,6 +448,8 @@ message LossParameter {
   optional float max_inside_dis = 4 [default = 8.0];
   optional float max_outside_dis = 5 [default = 12.0];
   optional float normal_sample_ratio = 6 [default = 1.0];
+  optional string debug_img_dir = 7 [default = ""];
+  optional int32 save_cycle = 8 [default = 1000];
 }
 
 // Messages that store parameters used by individual layer types follow, in
